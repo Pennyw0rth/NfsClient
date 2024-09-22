@@ -3,6 +3,11 @@ import struct
 import socket
 import time
 from random import randint
+from .rpc_const import (CALL, REPLY, MSG_ACCEPTED, MSG_DENIED,
+                        SUCCESS, PROG_UNAVAIL, PROG_MISMATCH, PROC_UNAVAIL, GARBAGE_ARGS, SYSTEM_ERR,
+                        RPC_MISMATCH, AUTH_ERROR,
+                        AUTH_REASON,
+                        AUTH_NONE, AUTH_SYS, AUTH_SHORT)
 
 logger = logging.getLogger(__package__)
 
@@ -21,7 +26,7 @@ class RPC(object):
         self.client = None
         self.client_port = None
 
-    def request(self, program, program_version, procedure, data=None, message_type=0, version=2, auth=None):
+    def request(self, program, program_version, procedure, data=None, message_type=CALL, version=2, auth=None):
 
         rpc_xid = int(time.time())
         rpc_message_type = message_type     # 0=call
@@ -106,19 +111,25 @@ class RPC(object):
 
                 data += response[4:]
 
-            rpc = data[:24]
+            rpc = data[:12]
             (
                 rpc_XID,
                 rpc_Message_Type,
                 rpc_Reply_State,
-                rpc_Verifier_Flavor,
-                rpc_Verifier_Length,
-                rpc_Accept_State
-            ) = struct.unpack('!LLLLLL', rpc)
+            ) = struct.unpack('!LLL', rpc)
 
-            if rpc_Message_Type != 1 or rpc_Reply_State != 0 or rpc_Accept_State != 0:
+            if rpc_Message_Type != REPLY:
                 raise Exception("RPC protocol error")
+            if rpc_Reply_State == MSG_DENIED:
+                reject_stat = struct.unpack('!L', data[12:16])[0]
+                if reject_stat == RPC_MISMATCH:
+                    low, high = struct.unpack('!LL', data[16:24])
+                    raise Exception(f"RPC protocol error: RPC_MISMATCH {low} {high}")
+                elif reject_stat == AUTH_ERROR:
+                    auth_stat = struct.unpack('!L', data[16:20])[0]
+                    raise Exception(f"RPC AUTH_ERROR: {AUTH_REASON.get(auth_stat, 'UNKNOWN')}")
 
+            logger.debug(f"RPC authentification success: {AUTH_REASON.get(SUCCESS, 'UNKNOWN')}")
             data = data[24:]
         except Exception as e:
             logger.exception(e)

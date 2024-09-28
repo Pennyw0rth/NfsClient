@@ -117,15 +117,15 @@ class RPC(object):
         ) = struct.unpack('!LLL', rpc)
 
         if rpc_Message_Type != REPLY:
-            raise Exception("RPC protocol error")
+            raise Exception("RPC_PROTOCOL_ERROR")
         if rpc_Reply_State == MSG_DENIED:
             reject_stat = struct.unpack('!L', data[12:16])[0]
             if reject_stat == RPC_MISMATCH:
                 low, high = struct.unpack('!LL', data[16:24])
-                raise Exception(f"RPC protocol error: RPC_MISMATCH {low} {high}")
+                raise Exception(f"RPC_PROTOCOL_ERROR: RPC_MISMATCH {low} {high}")
             elif reject_stat == AUTH_ERROR:
                 auth_stat = struct.unpack('!L', data[16:20])[0]
-                raise Exception(f"RPC AUTH_ERROR: {AUTH_REASON.get(auth_stat, 'UNKNOWN')}")
+                raise Exception(f"RPC_AUTH_ERROR: {AUTH_REASON.get(auth_stat, 'UNKNOWN')}")
 
         logger.debug(f"RPC authentification success: {AUTH_REASON.get(SUCCESS, 'UNKNOWN')}")
         data = data[24:]

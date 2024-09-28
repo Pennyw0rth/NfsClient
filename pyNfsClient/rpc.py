@@ -27,7 +27,7 @@ class RPC(object):
         self.client_port = None
 
     def request(self, program, program_version, procedure, data=None, message_type=CALL, version=2, auth=None):
-
+        # Send RPC request
         rpc_xid = int(time.time())
         rpc_message_type = message_type     # 0=call
         rpc_rpc_version = version
@@ -95,44 +95,40 @@ class RPC(object):
             proto += data
 
         rpc_fragment_header = 0x80000000 + len(proto)
-
         proto = struct.pack('!L', rpc_fragment_header) + proto
+        self.client.send(proto)
 
-        try:
-            self.client.send(proto)
+        # Receive RPC response
+        last_fragment = False
+        data = b""
 
-            last_fragment = False
-            data = b""
+        while not last_fragment:
+            response = self.recv()
 
-            while not last_fragment:
-                response = self.recv()
+            last_fragment = struct.unpack('!L', response[:4])[0] & 0x80000000 != 0
 
-                last_fragment = struct.unpack('!L', response[:4])[0] & 0x80000000 != 0
+            data += response[4:]
 
-                data += response[4:]
+        rpc = data[:12]
+        (
+            rpc_XID,
+            rpc_Message_Type,
+            rpc_Reply_State,
+        ) = struct.unpack('!LLL', rpc)
 
-            rpc = data[:12]
-            (
-                rpc_XID,
-                rpc_Message_Type,
-                rpc_Reply_State,
-            ) = struct.unpack('!LLL', rpc)
+        if rpc_Message_Type != REPLY:
+            raise Exception("RPC protocol error")
+        if rpc_Reply_State == MSG_DENIED:
+            reject_stat = struct.unpack('!L', data[12:16])[0]
+            if reject_stat == RPC_MISMATCH:
+                low, high = struct.unpack('!LL', data[16:24])
+                raise Exception(f"RPC protocol error: RPC_MISMATCH {low} {high}")
+            elif reject_stat == AUTH_ERROR:
+                auth_stat = struct.unpack('!L', data[16:20])[0]
+                raise Exception(f"RPC AUTH_ERROR: {AUTH_REASON.get(auth_stat, 'UNKNOWN')}")
 
-            if rpc_Message_Type != REPLY:
-                raise Exception("RPC protocol error")
-            if rpc_Reply_State == MSG_DENIED:
-                reject_stat = struct.unpack('!L', data[12:16])[0]
-                if reject_stat == RPC_MISMATCH:
-                    low, high = struct.unpack('!LL', data[16:24])
-                    raise Exception(f"RPC protocol error: RPC_MISMATCH {low} {high}")
-                elif reject_stat == AUTH_ERROR:
-                    auth_stat = struct.unpack('!L', data[16:20])[0]
-                    raise Exception(f"RPC AUTH_ERROR: {AUTH_REASON.get(auth_stat, 'UNKNOWN')}")
-
-            logger.debug(f"RPC authentification success: {AUTH_REASON.get(SUCCESS, 'UNKNOWN')}")
-            data = data[24:]
-        except Exception as e:
-            logger.exception(e)
+        logger.debug(f"RPC authentification success: {AUTH_REASON.get(SUCCESS, 'UNKNOWN')}")
+        data = data[24:]
 
         return data
 

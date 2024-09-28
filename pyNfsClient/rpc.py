@@ -57,16 +57,16 @@ class RPC(object):
         elif auth["flavor"] == 1:   # AUTH_UNIX
             stamp = int(time.time()) & 0xffff
             auth_data = struct.pack(
-                    "!LL",
-                    stamp,
-                    len(auth["machine_name"])
+                "!LL",
+                stamp,
+                len(auth["machine_name"])
             )
             auth_data += auth["machine_name"].encode()
             auth_data += b'\x00'*((4-len(auth["machine_name"]) % 4) % 4)
             auth_data += struct.pack(
-                    "!LL",
-                    auth["uid"],
-                    auth["gid"],
+                "!LL",
+                auth["uid"],
+                auth["gid"],
             )
             if len(auth['aux_gid']) == 1 and auth['aux_gid'][0] == 0:
                 auth_data += struct.pack("!L", 0)
@@ -132,8 +132,9 @@ class RPC(object):
 
         return data
 
-    def connect(self, sock_family = socket.AF_INET):
-        self.client = socket.socket(sock_family, socket.SOCK_STREAM)
+    def connect(self):
+        af, socktype, proto, cn, socket_addr = socket.getaddrinfo(self.host, self.port)[0]
+        self.client = socket.socket(af, socktype)
         self.client.settimeout(self.timeout)
         # if we are running as root, use a source port between 500 and 1024 (NFS security options...)
         random_port = None
@@ -153,7 +154,7 @@ class RPC(object):
         except Exception as e:
             logger.error(e)
 
-        self.client.connect((self.host, self.port))
+        self.client.connect(socket_addr)
         RPC.connections.append(self)
 
     def disconnect(self):

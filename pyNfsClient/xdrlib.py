@@ -20,7 +20,6 @@ class Error(Exception):
 
     Public ivars:
         msg -- contains the message
-
     """
 
     def __init__(self, msg):
@@ -65,19 +64,19 @@ class Packer:
 
     @raise_conversion_error
     def pack_uint(self, x):
-        self.__buf.write(struct.pack('>L', x))
+        self.__buf.write(struct.pack(">L", x))
 
     @raise_conversion_error
     def pack_int(self, x):
-        self.__buf.write(struct.pack('>l', x))
+        self.__buf.write(struct.pack(">l", x))
 
     pack_enum = pack_int
 
     def pack_bool(self, x):
         if x:
-            self.__buf.write(b'\0\0\0\1')
+            self.__buf.write(b"\0\0\0\1")
         else:
-            self.__buf.write(b'\0\0\0\0')
+            self.__buf.write(b"\0\0\0\0")
 
     def pack_uhyper(self, x):
         try:
@@ -93,18 +92,18 @@ class Packer:
 
     @raise_conversion_error
     def pack_float(self, x):
-        self.__buf.write(struct.pack('>f', x))
+        self.__buf.write(struct.pack(">f", x))
 
     @raise_conversion_error
     def pack_double(self, x):
-        self.__buf.write(struct.pack('>d', x))
+        self.__buf.write(struct.pack(">d", x))
 
     def pack_fstring(self, n, s):
         if n < 0:
-            raise ValueError('fstring size must be nonnegative')
+            raise ValueError("fstring size must be nonnegative")
         data = s[:n]
         n = ((n+3)//4)*4
-        data = data + (n - len(data)) * b'\0'
+        data = data + (n - len(data)) * b"\0"
         self.__buf.write(data)
 
     pack_fopaque = pack_fstring
@@ -125,7 +124,7 @@ class Packer:
 
     def pack_farray(self, n, list, pack_item):
         if len(list) != n:
-            raise ValueError('wrong array size')
+            raise ValueError("wrong array size")
         for item in list:
             pack_item(item)
 
@@ -156,7 +155,7 @@ class Unpacker:
 
     def done(self):
         if self.__pos < len(self.__buf):
-            raise Error('unextracted data remains')
+            raise Error("unextracted data remains")
 
     def unpack_uint(self):
         i = self.__pos
@@ -164,7 +163,7 @@ class Unpacker:
         data = self.__buf[i:j]
         if len(data) < 4:
             raise EOFError
-        return struct.unpack('>L', data)[0]
+        return struct.unpack(">L", data)[0]
 
     def unpack_int(self):
         i = self.__pos
@@ -172,7 +171,7 @@ class Unpacker:
         data = self.__buf[i:j]
         if len(data) < 4:
             raise EOFError
-        return struct.unpack('>l', data)[0]
+        return struct.unpack(">l", data)[0]
 
     unpack_enum = unpack_int
 
@@ -196,7 +195,7 @@ class Unpacker:
         data = self.__buf[i:j]
         if len(data) < 4:
             raise EOFError
-        return struct.unpack('>f', data)[0]
+        return struct.unpack(">f", data)[0]
 
     def unpack_double(self):
         i = self.__pos
@@ -204,11 +203,11 @@ class Unpacker:
         data = self.__buf[i:j]
         if len(data) < 8:
             raise EOFError
-        return struct.unpack('>d', data)[0]
+        return struct.unpack(">d", data)[0]
 
     def unpack_fstring(self, n):
         if n < 0:
-            raise ValueError('fstring size must be nonnegative')
+            raise ValueError("fstring size must be nonnegative")
         i = self.__pos
         j = i + (n+3)//4*4
         if j > len(self.__buf):
@@ -229,7 +228,7 @@ class Unpacker:
         list = []
         while (x := self.unpack_uint()) != 0:
             if x != 1:
-                raise ConversionError('0 or 1 expected, got %r' % (x,))
+                raise ConversionError("0 or 1 expected, got %r" % (x,))
             item = unpack_item()
             list.append(item)
         return list

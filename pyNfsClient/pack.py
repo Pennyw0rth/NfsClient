@@ -1,6 +1,6 @@
 import struct
-from xdrlib import Packer, Unpacker, ConversionError
-from xdrlib import Error as XDRError
+from .xdrlib import Packer, Unpacker, ConversionError
+from .xdrlib import Error as XDRError
 from . import const
 from . import rtypes as types
 

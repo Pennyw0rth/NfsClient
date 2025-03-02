@@ -126,11 +126,29 @@ class RPC(object):
             elif reject_stat == AUTH_ERROR:
                 auth_stat = struct.unpack('!L', data[16:20])[0]
                 raise Exception(f"RPC_AUTH_ERROR: {AUTH_REASON.get(auth_stat, 'UNKNOWN')}")
+        else:
+            (
+                auth_flavor,
+                auth_length,
+                accept_stat,
+            ) = struct.unpack('!LLL', data[12:24])
+            if accept_stat == SUCCESS:
+                pass
+            elif accept_stat == PROG_UNAVAIL:
+                raise Exception("RPC_PROG_UNAVAIL: remote hasn't exported program")
+            elif accept_stat == PROG_MISMATCH:
+                low, high = struct.unpack('!LL', data[24:32])
+                raise Exception(f"RPC_PROG_MISMATCH: remote can't support version: {low} {high}")
+            elif accept_stat == PROC_UNAVAIL:
+                raise Exception("RPC_PROC_UNAVAIL: remote doesn't support procedure")
+            elif accept_stat == GARBAGE_ARGS:
+                raise Exception("RPC_GARBAGE_ARGS: procedure can't decode params")
+            elif accept_stat == SYSTEM_ERR:
+                raise Exception("RPC_SYSTEM_ERR: remote system error")
 
         logger.debug(f"RPC authentification success: {AUTH_REASON.get(SUCCESS, 'UNKNOWN')}")
-        data = data[24:]
 
-        return data
+        return data[24:]
 
     def connect(self):
         af, socktype, proto, cn, socket_addr = socket.getaddrinfo(self.host, self.port)[0]

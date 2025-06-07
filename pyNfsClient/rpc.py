@@ -157,18 +157,26 @@ class RPC(object):
         # if we are running as root, use a source port between 500 and 1024 (NFS security options...)
         random_port = None
         try:
-            i = 0
-            while True:
+            for i in range(300):
                 try:
                     random_port = randint(500, 1023)
-                    i += 1
                     self.client.bind(('', random_port))
                     self.client_port = random_port
-                    logger.debug("Port %d occupied" % self.client_port)
+                    logger.debug(f"RPC client bound to port {self.client_port}")
                     break
-                except:
-                    logger.warning("Socket port binding with %d failed in loop %d, try again." % (random_port, i))
+                except PermissionError as e:
+                    # no binding privileges to low port
+                    if e.errno == 13:
+                        logger.error("Permission denied! Could not bind to low port, NFS functionality limited!")
+                        break
+                    else:
+                        raise
+                except OSError as e:
+                    # Address already in use
+                    logger.warning(f"Socket port binding with {random_port} failed in loop {i}, try again.")
                     continue
+            else:
+                logger.error("Could not bind client port. Exceeded 300 tries.")
         except Exception as e:
             logger.error(e)
 

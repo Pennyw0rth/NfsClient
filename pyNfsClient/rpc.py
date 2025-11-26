@@ -96,7 +96,7 @@ class RPC(object):
 
         rpc_fragment_header = 0x80000000 + len(proto)
         proto = struct.pack('!L', rpc_fragment_header) + proto
-        self.client.send(proto)
+        self.client.sendall(proto)
 
         # Receive RPC response
         last_fragment = False

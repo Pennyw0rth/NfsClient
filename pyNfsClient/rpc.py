@@ -147,12 +147,18 @@ class RPC(object):
                 raise Exception("RPC_SYSTEM_ERR: remote system error")
 
         logger.debug(f"RPC authentification success: {AUTH_REASON.get(SUCCESS, 'UNKNOWN')}")
-
         return data[24:]
 
     def connect(self):
-        af, socktype, proto, cn, socket_addr = socket.getaddrinfo(self.host, self.port)[0]
-        self.client = socket.socket(af, socktype)
+        # Force TCP to avoid OS-dependent getaddrinfo ordering differences
+        af, socktype, proto, cn, socket_addr = socket.getaddrinfo(
+            self.host,
+            self.port,
+            0,
+            socket.SOCK_STREAM
+        )[0]
+
+        self.client = socket.socket(af, socktype, proto)
         self.client.settimeout(self.timeout)
         # if we are running as root, use a source port between 500 and 1024 (NFS security options...)
         random_port = None
@@ -202,17 +208,28 @@ class RPC(object):
         rpc_response_size = b""
 
         try:
-            while len(rpc_response_size) != 4:
-                rpc_response_size = self.client.recv(4)
+            while len(rpc_response_size) < 4:
+                chunk = self.client.recv(4 - len(rpc_response_size))
+
+                if not chunk:
+                    raise RPCProtocolError("connection closed while reading RPC fragment header")
+
+                rpc_response_size += chunk
 
             if len(rpc_response_size) != 4:
                 raise RPCProtocolError("incorrect recv response size: %d" % len(rpc_response_size))
-            response_size = struct.unpack('!L', rpc_response_size)[0] & 0x7fffffff
-
+            response_size = struct.unpack('!L', rpc_response_size)[0] & 0x7FFFFFFF
             rpc_response = rpc_response_size
-            while len(rpc_response) < response_size:
-                rpc_response = rpc_response + self.client.recv(response_size-len(rpc_response)+4)
+
+            while len(rpc_response) < response_size + 4:
+                chunk = self.client.recv((response_size + 4) - len(rpc_response))
+
+                if not chunk:
+                    raise RPCProtocolError("connection closed while reading RPC fragment body")
+
+                rpc_response += chunk
 
             return rpc_response
         except Exception as e:
             logger.exception(e)
+            

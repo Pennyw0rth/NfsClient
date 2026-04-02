@@ -1,7 +1,7 @@
 import struct
 import logging
 
-from .rpc import RPC, RPCProtocolError
+from .rpc import RPC
 from .pack import nfs_pro_v3Unpacker
 from .const import MOUNT_PROGRAM, MOUNT_V3, MNT3_OK, MOUNTSTAT3, MNT3ERR_NOTSUPP
 from .portmap import Portmap
@@ -80,7 +80,7 @@ class Mount(RPC):
                 mount.null()
                 return mount
 
-            except (TimeoutError, OSError, RPCProtocolError) as e:
+            except (TimeoutError, OSError) as e:
                 last_exc = e
 
                 try:

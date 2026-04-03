@@ -1,10 +1,8 @@
 import struct
 import logging
-
 from .rpc import RPC
 from .pack import nfs_pro_v3Unpacker
 from .const import MOUNT_PROGRAM, MOUNT_V3, MNT3_OK, MOUNTSTAT3, MNT3ERR_NOTSUPP
-from .portmap import Portmap
 
 log = logging.getLogger(__package__)
 
@@ -21,89 +19,6 @@ class Mount(RPC):
         super(Mount, self).__init__(host=host, port=port, timeout=timeout)
         self.path = None
         self.auth = auth
-
-    @classmethod
-    def from_portmap(cls, host, timeout, auth, preferred_port=None, preferred_protocol='tcp'):
-        candidates = []
-
-        # FIRST TRY: dump()
-        try:
-            pm = Portmap(host, timeout=timeout)
-            pm.connect()
-
-            try:
-                candidates = pm.get_mountd_candidates(preferred_port=preferred_port, preferred_protocol=preferred_protocol, version=cls.program_version)
-            finally:
-                pm.disconnect()
-
-        except Exception:
-            pass
-
-        # SECOND TRY: getport fallback
-        if not candidates:
-            try:
-                pm = Portmap(host, timeout=timeout)
-                pm.connect()
-
-                try:
-                    port = pm.getport(cls.program, cls.program_version)
-                    candidates = [{
-                        "protocol": "tcp",
-                        "port": port
-                    }]
-                finally:
-                    pm.disconnect()
-
-            except Exception as e:
-                raise MountAccessError(f"Failed to obtain mountd port: {e}")
-
-        last_exc = None
-
-        for candidate in candidates:
-            if not candidate or not isinstance(candidate, dict):
-                continue
-
-            if 'port' not in candidate:
-                continue
-
-            port = candidate['port']
-
-            mount = cls(
-                host=host,
-                port=port,
-                timeout=timeout,
-                auth=auth,
-            )
-
-            try:
-                mount.connect()
-                mount.null()
-                return mount
-
-            except (TimeoutError, OSError) as e:
-                last_exc = e
-
-                try:
-                    mount.disconnect()
-                except Exception:
-                    pass
-
-                continue
-
-        if preferred_port:
-            fallback = cls(
-                host=host,
-                port=preferred_port,
-                timeout=timeout,
-                auth=auth
-            )
-            fallback.connect()
-            return fallback
-
-        if last_exc:
-            raise last_exc
-
-        raise MountAccessError("No usable mountd endpoint found")
 
     def null(self, auth=None):
         log.debug("Mount NULL on %s" % self.host)

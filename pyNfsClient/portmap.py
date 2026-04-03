@@ -1,6 +1,6 @@
 import struct
 from .rpc import RPC
-from .const import PORTMAP_PROGRAM, PORTMAP_VERSION, PORTMAP_PORT, MOUNT_PROGRAM
+from .const import PORTMAP_PROGRAM, PORTMAP_VERSION, PORTMAP_PORT
 
 
 class Portmap(RPC):
@@ -58,52 +58,6 @@ class Portmap(RPC):
             portmap_map_entries = portmap_map_entries[4:]
 
         return rpc_map_entries
-
-    def get_mountd_candidates(self, preferred_port=None, preferred_protocol='tcp', version=3):
-        candidates = []
-        seen = set()
-
-        for entry in self.dump():
-            if not entry or not isinstance(entry, dict):
-                continue
-
-            if entry.get('program') != MOUNT_PROGRAM:
-                continue
-
-            if entry.get('version') != version:
-                continue
-
-            protocol = entry.get('protocol')
-            port = entry.get('port')
-
-            if protocol not in ('tcp', 'udp'):
-                continue
-
-            if not isinstance(port, int) or port <= 0:
-                continue
-
-            key = (protocol, port)
-            if key in seen:
-                continue
-
-            seen.add(key)
-            candidates.append(
-                {
-                    'program': entry['program'],
-                    'version': entry['version'],
-                    'protocol': protocol,
-                    'port': port,
-                }
-            )
-
-        def sort_key(entry):
-            return (
-                0 if entry['protocol'] == preferred_protocol else 1,
-                0 if preferred_port is not None and entry['port'] == preferred_port else 1,
-                entry['port'],
-            )
-
-        return sorted(candidates, key=sort_key)
 
     def getport(self, getport_program, getport_program_version, getport_protocol=6):
         # RPC

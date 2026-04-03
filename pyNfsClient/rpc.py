@@ -152,7 +152,7 @@ class RPC(object):
 
     def connect(self):
         # Force TCP to avoid OS-dependent getaddrinfo ordering differences
-        af, socktype, proto, cn, socket_addr = socket.getaddrinfo(self.host, self.port, 0, socket.SOCK_STREAM)[0]
+        af, socktype, proto, cn, socket_addr = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)[0]
         self.client = socket.socket(af, socktype)
         self.client.settimeout(self.timeout)
         # if we are running as root, use a source port between 500 and 1024 (NFS security options...)

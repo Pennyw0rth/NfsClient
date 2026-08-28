@@ -158,9 +158,10 @@ class RPC(object):
         # if we are running as root, use a source port between 500 and 1024 (NFS security options...)
         random_port = None
         try:
-            for i in range(300):
+            for i in range(120_000):
                 try:
-                    random_port = randint(500, 1023)
+                    # We want to iterate over ports 1-1023 since they are privileged ports
+                    random_port = (i % 1022) + 1
                     self.client.bind(('', random_port))
                     self.client_port = random_port
                     logger.debug(f"RPC client bound to port {self.client_port}")
@@ -177,7 +178,7 @@ class RPC(object):
                     logger.warning(f"Socket port binding with {random_port} failed in loop {i}, try again.")
                     continue
             else:
-                logger.error("Could not bind client port. Exceeded 300 tries.")
+                logger.error("Could not bind client port. No ports left on the Client.")
         except Exception as e:
             logger.error(e)
 

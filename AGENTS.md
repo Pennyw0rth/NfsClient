@@ -4,6 +4,7 @@
 
 - Use `192.168.108.140` as the authorized NFS development and integration-test target.
 - NFSv4 connects directly to TCP port 2049. It must not require rpcbind, the MOUNT protocol, or TCP/UDP port 111.
+- RPC transports always bind to a privileged source port; do not expose an option to disable privileged-port binding.
 - Keep the NFSv3 rpcbind and MOUNT workflow separate from the NFSv4 workflow.
 - Do not store target credentials, Kerberos keys, keytabs, or credential-cache contents in this repository.
 

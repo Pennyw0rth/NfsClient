@@ -15,8 +15,8 @@ __all__ = ["Error", "Packer", "Unpacker", "ConversionError"]
 class Error(Exception):
     """Exception class for this module. Use:
 
-    except xdrlib.Error as var:
-        # var has the Error instance for the exception
+    except xdrlib.Error as e:
+        # e has the Error instance for the exception
 
     Public ivars:
         msg -- contains the message

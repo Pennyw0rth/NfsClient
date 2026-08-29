@@ -33,9 +33,29 @@ AUTH_REASON = {
     # failed locally
     6: "AUTH_INVALIDRESP",  # bogus response verifier
     7: "AUTH_FAILED",       # reason unknown
+    13: "RPCSEC_GSS_CREDPROBLEM",
+    14: "RPCSEC_GSS_CTXPROBLEM",
 }
+
+RPCSEC_GSS_CREDPROBLEM = 13
+RPCSEC_GSS_CTXPROBLEM = 14
 
 # Auth flavors
 AUTH_NONE  = 0
 AUTH_SYS   = 1
 AUTH_SHORT = 2
+RPCSEC_GSS = 6
+
+ACCEPT_STATUS = {
+    SUCCESS: "RPC call succeeded",
+    PROG_UNAVAIL: "RPC program is unavailable",
+    PROG_MISMATCH: "RPC program version is unavailable",
+    PROC_UNAVAIL: "RPC procedure is unavailable",
+    GARBAGE_ARGS: "RPC procedure could not decode its arguments",
+    SYSTEM_ERR: "RPC server reported a system error",
+}
+
+REJECT_STATUS = {
+    RPC_MISMATCH: "RPC version mismatch",
+    AUTH_ERROR: "RPC authentication error",
+}

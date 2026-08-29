@@ -51,7 +51,7 @@ class NFSv3(RPC):
 
     def null(self):
         logger.debug("NFSv3 procedure %d: NULL on %s" % (NFS3_PROCEDURE_NULL, self.host))
-        super(NFSv3, self).request(NFS_PROGRAM, NFS_V3, NFS3_PROCEDURE_NULL)
+        super(NFSv3, self).request(NFS_PROGRAM, NFS_V3, NFS3_PROCEDURE_NULL, auth=self.auth)
 
         return {"status": 0, "resok": None}
 

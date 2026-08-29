@@ -1,13 +1,17 @@
+import errno
 import logging
-import struct
+import secrets
 import socket
+import struct
 import time
 from random import randint
-from .rpc_const import (CALL, REPLY, MSG_ACCEPTED, MSG_DENIED,
-                        SUCCESS, PROG_UNAVAIL, PROG_MISMATCH, PROC_UNAVAIL, GARBAGE_ARGS, SYSTEM_ERR,
-                        RPC_MISMATCH, AUTH_ERROR,
-                        AUTH_REASON,
-                        AUTH_NONE, AUTH_SYS, AUTH_SHORT)
+
+from .rpc_const import (
+    ACCEPT_STATUS, AUTH_ERROR, AUTH_NONE, AUTH_REASON, AUTH_SYS,
+    CALL, MSG_ACCEPTED, MSG_DENIED, PROG_MISMATCH, REJECT_STATUS, REPLY,
+    RPC_MISMATCH, RPCSEC_GSS_CREDPROBLEM, RPCSEC_GSS_CTXPROBLEM, SUCCESS,
+)
+
 
 logger = logging.getLogger(__package__)
 

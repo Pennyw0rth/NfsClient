@@ -25,10 +25,13 @@ class Mount(RPC):
         super(Mount, self).request(self.program, self.program_version, 0, auth=auth if auth else self.auth)
         return {"status": MNT3_OK, "message": MOUNTSTAT3[MNT3_OK]}
 
+    @staticmethod
+    def pack_path(path):
+        path = path.encode()
+        return struct.pack("!L", len(path)) + path + b"\x00" * (-len(path) % 4)
+
     def mnt(self, path, auth=None):
-        data = struct.pack('!L', len(path))
-        data += path.encode()
-        data += b'\x00'*((4-len(path) % 4) % 4)
+        data = self.pack_path(path)
 
         log.debug("Do mount on %s" % path)
         data = super(Mount, self).request(self.program, self.program_version, 1, data=data,
@@ -44,12 +47,8 @@ class Mount(RPC):
         if not self.path:
             log.warning("No path mounted, cannot process umount.")
             return {"status": MNT3ERR_NOTSUPP, "message": MOUNTSTAT3[MNT3ERR_NOTSUPP]}
-        data = struct.pack("!L", len(self.path))
-        data += self.path.encode()
-        data += b"\x00" * ((4 - len(self.path) % 4) % 4)
-
         log.debug("Do umount on %s" % self.path)
-        super(Mount, self).request(self.program, self.program_version, 3, data=data, auth=auth if auth else self.auth)
+        super(Mount, self).request(self.program, self.program_version, 3, data=self.pack_path(self.path), auth=auth if auth else self.auth)
 
         return {"status": MNT3_OK, "message": MOUNTSTAT3[MNT3_OK]}
 

@@ -1,0 +1,45 @@
+[project]
+name = "pyNfsClient"
+dynamic = ["version"]
+description = "Pure Python NFS client"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Alexander Neff", email = "alex99.neff@gmx.de" },
+    { name = "Cooper Yang", email = "cm_yang@yeah.net" },
+]
+keywords = ["NFS", "ONC RPC", "RPCSEC_GSS", "Kerberos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Filesystems",
+]
+
+[project.optional-dependencies]
+kerberos = ["impacket"]
+
+[project.urls]
+Homepage = "https://github.com/Pennyw0rth/NfsClient"
+Repository = "https://github.com/Pennyw0rth/NfsClient"
+Issues = "https://github.com/Pennyw0rth/NfsClient/issues"
+
+[tool.setuptools]
+packages = ["pyNfsClient"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pyNfsClient.__info__.__version__" }
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"

@@ -25,6 +25,8 @@
 
 ## Coding style
 
+- Never add a comment or docstring at the top of a Python file unless that file already has a top-of-file comment or docstring.
+- In parenthesized Python import blocks, group multiple imported names on each line instead of placing every name on its own line; for example, divide 15 imports across roughly three readable lines.
 - Keep function and method call arguments on one line when practical, including in existing files; only wrap them when a single line would materially hurt readability. This applies to calls, not object literals such as dictionaries, lists, tuples, or sets, which should be formatted for readability.
 - Only assign an expression to a variable when that variable will be reassigned later; otherwise, use the expression directly.
 - Always bind caught exceptions as `e`, not `error` or another name.

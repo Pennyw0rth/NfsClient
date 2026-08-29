@@ -1,17 +1,16 @@
-from __future__ import absolute_import
 import logging
 from logging import NullHandler
-from .__info__ import (__version__, __author__, __author_email__, __description__)
+from .__info__ import __author_email__, __authors__, __description__, __version__
 from .rpc import RPC
 from .portmap import Portmap
 from .mount import Mount
 from .nfs3 import NFSv3
+from .nfs4 import NFS4Error, NFSv4
 from .const import *
 
 logging.getLogger(__package__).addHandler(NullHandler())
 
-__author__ = "{} <{}>".format(__author__, __author_email__)
-__version__ = __version__
+__author__ = ", ".join(f"{name} <{email}>" for name, email in __authors__)
 __doc__ = __description__
 
 
@@ -19,7 +18,7 @@ def release_all_rpc():
     RPC.disconnect_all()
 
 
-__all__ = ("Portmap", "Mount", "NFSv3", "MOUNT_PROGRAM", "MNT3_OK", "MNT3ERR_ACCES", "MNT3ERR_INVAL", "MNT3ERR_IO",
+__all__ = ("Portmap", "Mount", "NFSv3", "NFSv4", "NFS4Error", "MOUNT_PROGRAM", "MNT3_OK", "MNT3ERR_ACCES", "MNT3ERR_INVAL", "MNT3ERR_IO",
            "MNT3ERR_NAMETOOLONG", "MNT3ERR_NOENT", "MNT3ERR_NOTDIR", "MNT3ERR_NOTSUPP", "MNT3ERR_PERM",
            "MNT3ERR_SERVERFAULT", "MOUNTSTAT3", "NFSSTAT3", "NFS3_OK", "NFS3ERR_ACCES", "NFS3ERR_BAD_COOKIE",
            "NFS3ERR_BADHANDLE", "NFS3ERR_BADTYPE", "NFS3ERR_DQUOT", "NFS3ERR_EXIST", "NFS3ERR_FBIG",

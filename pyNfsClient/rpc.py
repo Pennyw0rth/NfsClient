@@ -30,13 +30,15 @@ class RPC(object):
 
     ONC RPC uses XDR, so integers are unsigned 32-bit values in network byte
     order and variable-length fields are padded to four-byte boundaries. TCP
-    record markers sit outside the XDR CALL and REPLY structures.
+    record markers sit outside the XDR CALL and REPLY structures. See RFC 5531
+    Sections 8.2, 9, and 11 and RFC 4506 Section 3.
 
     ``auth=None`` produces an empty AUTH_NONE credential. A dictionary produces
     an AUTH_SYS credential, which asserts UNIX identity values but does not prove
     them cryptographically. Stateful mechanisms such as RPCSEC_GSS provide an
     object with ``marshal_call`` and ``process_reply`` methods because their MIC
     must cover exact serialized RPC fields and their replies must be verified.
+    See RFC 2203 Section 5 and RFC 3530 Section 3.
     """
 
     connections = []
@@ -50,7 +52,7 @@ class RPC(object):
         self.client_port = None
 
     def request(self, program, program_version, procedure, data=None, message_type=CALL, version=2, auth=None):
-        """Encode one CALL, send it, validate its REPLY, and return result bytes."""
+        """Encode one RFC 5531 Section 9 CALL and return its validated REPLY."""
         if self.client is None:
             raise RPCProtocolError("RPC client is not connected")
 
@@ -58,17 +60,14 @@ class RPC(object):
         while True:
             try:
                 xid = secrets.randbits(32)
-                # Fixed CALL header, in wire order:
-                # xid, CALL, RPC version, program, program version, procedure.
+                # RFC 5531 Section 9: xid, CALL, RPC version, program, program version, procedure.
                 call_header = struct.pack("!6L", xid, message_type, version, program, program_version, procedure)
                 body = b"" if data is None else data
                 if auth is not None and hasattr(auth, "marshal_call"):
-                    # RPCSEC_GSS builds the credential and verifier together: its
-                    # verifier is a MIC over the fixed header plus the credential.
+                    # RFC 2203 Section 5.3.1 signs the fixed header through the credential.
                     call = auth.marshal_call(call_header, body)
                 else:
-                    # A normal CALL continues with credential, verifier, and the
-                    # already-XDR-encoded procedure arguments.
+                    # RFC 5531 Section 9 places credential, verifier, and arguments after the fixed CALL fields.
                     call = call_header + self.pack_credential(auth) + self.pack_opaque_auth(AUTH_NONE, b"") + body
 
                 self.send_record(call)
@@ -76,8 +75,7 @@ class RPC(object):
                 if len(reply) < 12:
                     raise RPCProtocolError("RPC reply is shorter than its fixed header")
 
-                # Every REPLY begins with xid, REPLY, and a reply discriminator.
-                # The discriminator selects the accepted or denied union arm.
+                # RFC 5531 Section 9 starts every REPLY with xid, REPLY, and the reply-union discriminator.
                 reply_xid, reply_type, reply_state = struct.unpack("!3L", reply[:12])
                 if reply_xid != xid:
                     raise RPCProtocolError(f"RPC reply XID {reply_xid:#x} does not match call XID {xid:#x}")
@@ -88,31 +86,25 @@ class RPC(object):
                 if reply_state != MSG_ACCEPTED:
                     raise RPCProtocolError(f"unknown RPC reply state {reply_state}")
 
-                # MSG_ACCEPTED means that the server understood the RPC envelope;
-                # accept_status still determines whether program dispatch worked.
-                # An accepted reply contains an opaque verifier before its
-                # acceptance status. AUTH_NONE uses an empty verifier, while a
-                # GSS verifier authenticates the matching request sequence.
+                # RFC 5531 Section 9 puts the verifier before accept_status; MSG_ACCEPTED does not imply SUCCESS.
+                # RFC 2203 Section 5.3.3.2 authenticates the matching GSS request sequence with that verifier.
                 verifier_flavor, verifier, offset = self.unpack_opaque_auth(reply, 12)
                 if len(reply) < offset + 4:
                     raise RPCProtocolError("RPC accepted reply has no acceptance status")
                 accept_status = struct.unpack("!L", reply[offset:offset + 4])[0]
                 if accept_status != SUCCESS:
-                    # A GSS reply verifier remains meaningful when RPC dispatch
-                    # reports a program/procedure error, so verify it first.
+                    # RFC 2203 Section 5.3.3.2 still defines the verifier when accept_status is not SUCCESS.
                     if auth is not None and hasattr(auth, "process_error_reply"):
                         auth.process_error_reply(verifier_flavor, verifier)
                     self.raise_accept_error(accept_status, reply[offset + 4:])
 
                 if auth is not None and hasattr(auth, "process_reply"):
-                    # RPCSEC_GSS verifies the server MIC here, then verifies or
-                    # unwraps the procedure result according to krb5/krb5i/krb5p.
+                    # RFC 2203 Sections 5.3.2 and 5.3.3.2 define MIC verification and result unwrapping.
                     return auth.process_reply(verifier_flavor, verifier, reply[offset + 4:])
                 logger.debug("RPC call succeeded")
                 return reply[offset + 4:]
             except RPCAuthenticationError as e:
-                # The auth object may have reserved sequence state for this call.
-                # Release it before either refreshing the context or failing.
+                # Release the RFC 2203 sequence state before refreshing or failing.
                 if auth is not None and hasattr(auth, "abort_request"):
                     auth.abort_request()
                 if (
@@ -121,8 +113,7 @@ class RPC(object):
                     and auth is not None
                     and hasattr(auth, "refresh")
                 ):
-                    # RFC 2203 permits an expired/broken RPCSEC_GSS context to be
-                    # recreated. Retry once so a persistent failure is surfaced.
+                    # RFC 2203 Section 5.3.3.3 requires context refresh and retry for these two statuses.
                     retry_context = False
                     auth.refresh(self, program, program_version)
                     continue
@@ -133,7 +124,7 @@ class RPC(object):
                 raise
 
     def connect(self):
-        # Force TCP to avoid OS-dependent getaddrinfo ordering differences.
+        # RFC 3530 Section 3.1 requires NFSv4 TCP support; force stream lookup to avoid OS-dependent ordering.
         address_family, socket_type, protocol, canonical_name, socket_address = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)[0]
         self.client = socket.socket(address_family, socket_type)
         self.client.settimeout(self.timeout)
@@ -181,15 +172,14 @@ class RPC(object):
             connection.disconnect()
 
     def send_record(self, payload):
-        """Send one complete RPC message as a single TCP record fragment."""
+        """Send one RPC message using RFC 5531 Section 11 record marking."""
         if len(payload) > 0x7fffffff:
             raise RPCProtocolError("RPC record is too large")
-        # RFC record marking: bit 31 means "last fragment" and the lower
-        # 31 bits carry the fragment length. This implementation emits one.
+        # RFC 5531 Section 11: bit 31 marks the last fragment; the low 31 bits hold its length.
         self.client.sendall(struct.pack("!L", 0x80000000 | len(payload)) + payload)
 
     def recv_record(self):
-        """Reassemble all TCP fragments belonging to one RPC reply record."""
+        """Reassemble an RFC 5531 Section 11 RPC record from TCP fragments."""
         record = bytearray()
         while True:
             fragment_header = struct.unpack("!L", self.recv_exact(4))[0]
@@ -203,7 +193,7 @@ class RPC(object):
                 return bytes(record)
 
     def recv(self):
-        """Receive one fragment including its record marker for legacy callers."""
+        """Receive one RFC 5531 Section 11 fragment for legacy callers."""
         fragment_header = self.recv_exact(4)
         return fragment_header + self.recv_exact(struct.unpack("!L", fragment_header)[0] & 0x7fffffff)
 
@@ -222,9 +212,9 @@ class RPC(object):
     def pack_opaque_auth(flavor, body):
         """Encode ``opaque_auth`` as flavor, length, body, and XDR padding.
 
-        The length describes only ``body``. Padding is present on the wire but is
-        not returned as part of a decoded body. A MIC over the complete serialized
-        credential still includes those padding bytes.
+        RFC 5531 Section 8.2 limits the body to 400 bytes. Its length excludes
+        padding; RFC 4506 Section 3 pads the encoded field to a four-byte boundary.
+        A MIC over the serialized credential includes that padding.
         """
         if len(body) > 400:
             raise RPCProtocolError("RPC opaque authentication body exceeds 400 bytes")
@@ -235,6 +225,7 @@ class RPC(object):
     def pack_credential(cls, auth):
         """Encode an AUTH_NONE or AUTH_SYS credential as ``opaque_auth``.
 
+        RFC 5531 Section 10.1 defines AUTH_NONE and Appendix A defines AUTH_SYS.
         AUTH_SYS dictionaries contain ``flavor``, ``machine_name``, ``uid``,
         ``gid``, and an ``aux_gid`` sequence. These values are claims supplied to
         the server; AUTH_SYS does not cryptographically verify the local account.
@@ -250,10 +241,7 @@ class RPC(object):
             raise RPCProtocolError("AUTH_SYS machine name exceeds 255 bytes")
         if len(auxiliary_groups) > 16:
             raise RPCProtocolError("AUTH_SYS credential exceeds 16 auxiliary groups")
-        # AUTH_SYS body, before the outer opaque_auth wrapper:
-        # stamp | machine-name length | machine name + padding |
-        # uid | primary gid | auxiliary-gid count | auxiliary gids.
-        # The CALL verifier remains AUTH_NONE; AUTH_SYS itself is not a MIC.
+        # RFC 5531 Appendix A: stamp | machine name | uid | primary gid | auxiliary gids; the verifier is AUTH_NONE.
         credential = struct.pack("!2L", int(time.time()) & 0xffffffff, len(machine_name))
         credential += machine_name + b"\x00" * (-len(machine_name) % 4)
         credential += struct.pack("!3L", auth["uid"], auth["gid"], len(auxiliary_groups))
@@ -262,7 +250,7 @@ class RPC(object):
 
     @staticmethod
     def unpack_opaque_auth(message, offset):
-        """Decode ``opaque_auth`` and return flavor, unpadded body, next offset."""
+        """Decode RFC 5531 Section 8.2 ``opaque_auth`` with RFC 4506 padding."""
         if len(message) < offset + 8:
             raise RPCProtocolError("truncated RPC opaque authentication header")
         flavor, length = struct.unpack("!2L", message[offset:offset + 8])
@@ -278,6 +266,7 @@ class RPC(object):
     def raise_denied_reply(reply):
         """Decode the MSG_DENIED union arm and raise its protocol error.
 
+        The union is defined by RFC 5531 Section 9.
         Denial happens before program dispatch and has no accepted-reply
         verifier. RPC_MISMATCH concerns RPC version 2 itself; AUTH_ERROR concerns
         the supplied credential or verifier.
@@ -301,6 +290,7 @@ class RPC(object):
     def raise_accept_error(accept_status, body):
         """Decode a non-success acceptance status after RPC dispatch.
 
+        The union is defined by RFC 5531 Section 9.
         PROG_MISMATCH means RPC version 2 worked but the requested program version
         did not, so its union arm carries the server's supported version range.
         """

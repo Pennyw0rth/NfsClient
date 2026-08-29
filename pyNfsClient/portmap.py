@@ -8,8 +8,8 @@ class Portmap(RPC):
     program_version = PORTMAP_VERSION
     port = PORTMAP_PORT
 
-    def __init__(self, host, timeout=6000):
-        super(Portmap, self).__init__(host, Portmap.port, timeout)
+    def __init__(self, host, timeout=6000, port=PORTMAP_PORT):
+        super(Portmap, self).__init__(host, port, timeout)
 
     def null(self):
         procedure = 0   # Null

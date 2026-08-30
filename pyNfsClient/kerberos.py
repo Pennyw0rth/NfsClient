@@ -15,13 +15,14 @@ from impacket.krb5.ccache import CCache
 from impacket.krb5.crypto import Key, _enctype_table
 from impacket.krb5.gssapi import (
     CheckSumField, GSS_C_CONF_FLAG, GSS_C_INTEG_FLAG, GSS_C_MUTUAL_FLAG,
-    KRB5_AP_REP, KRB5_AP_REQ, KRB5_ERROR, KRB_OID,
-    KerberosGSSContext, MechIndepToken,
+    KRB_OID, MechIndepToken,
 )
 from impacket.krb5.kerberosv5 import getKerberosTGS, getKerberosTGT
 from impacket.krb5.keytab import Enctype, Keytab
 from impacket.krb5.types import KerberosTime, Principal, Ticket
 from impacket.spnego import ASN1_AID, ASN1_OID, TypesMech, asn1encode
+
+from .gssapi import KRB5_AP_REP, KRB5_AP_REQ, KRB5_ERROR, KerberosGSSContext
 
 
 class KerberosCredentialError(Exception):

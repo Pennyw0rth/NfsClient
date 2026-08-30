@@ -1,16 +1,12 @@
 from pyasn1.codec.der import decoder, encoder
 from pyasn1.type.univ import noValue
-import pytest
 
 from impacket.krb5 import constants
 from impacket.krb5.asn1 import Authenticator, TGS_REP, seq_set
 from impacket.krb5.gssapi import CheckSumField, GSS_C_CONF_FLAG, GSS_C_INTEG_FLAG, GSS_C_MUTUAL_FLAG, GSS_C_REPLAY_FLAG, GSS_C_SEQUENCE_FLAG
 from impacket.krb5.types import Principal
 
-try:
-    from pyNfsClient.kerberos import KerberosInitiator
-except ImportError as e:
-    pytest.skip(f"companion Impacket GSS context is unavailable: {e}", allow_module_level=True)
+from pyNfsClient.kerberos import KerberosInitiator
 
 
 def encoded_service_ticket():

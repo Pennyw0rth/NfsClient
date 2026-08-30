@@ -143,7 +143,7 @@ class RPC(object):
         for attempt in range(120_000):
             try:
                 # Cycle deterministically through reserved ports 1 through 1022.
-                self.client_port = (attempt % 1022) + 1
+                self.client_port = (attempt % 1023) + 1
                 self.client.bind(("", self.client_port))
                 logger.debug("RPC client bound to port %d", self.client_port)
                 return

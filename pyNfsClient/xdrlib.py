@@ -228,7 +228,7 @@ class Unpacker:
         list = []
         while (x := self.unpack_uint()) != 0:
             if x != 1:
-                raise ConversionError("0 or 1 expected, got %r" % (x,))
+                raise ConversionError(f"0 or 1 expected, got {x!r}")
             item = unpack_item()
             list.append(item)
         return list

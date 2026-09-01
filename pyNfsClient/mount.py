@@ -21,7 +21,7 @@ class Mount(RPC):
         self.auth = auth
 
     def null(self, auth=None):
-        log.debug("Mount NULL on %s" % self.host)
+        log.debug(f"Mount NULL on {self.host}")
         super(Mount, self).request(self.program, self.program_version, 0, auth=auth if auth else self.auth)
         return {"status": MNT3_OK, "message": MOUNTSTAT3[MNT3_OK]}
 
@@ -33,7 +33,7 @@ class Mount(RPC):
     def mnt(self, path, auth=None):
         data = self.pack_path(path)
 
-        log.debug("Do mount on %s" % path)
+        log.debug(f"Do mount on {path}")
         data = super(Mount, self).request(self.program, self.program_version, 1, data=data,
                                           auth=auth if auth else self.auth)
 
@@ -47,13 +47,13 @@ class Mount(RPC):
         if not self.path:
             log.warning("No path mounted, cannot process umount.")
             return {"status": MNT3ERR_NOTSUPP, "message": MOUNTSTAT3[MNT3ERR_NOTSUPP]}
-        log.debug("Do umount on %s" % self.path)
+        log.debug(f"Do umount on {self.path}")
         super(Mount, self).request(self.program, self.program_version, 3, data=self.pack_path(self.path), auth=auth if auth else self.auth)
 
         return {"status": MNT3_OK, "message": MOUNTSTAT3[MNT3_OK]}
 
     def export(self):
-        log.debug("Get mount export on %s" % self.host)
+        log.debug(f"Get mount export on {self.host}")
         export = super(Mount, self).request(self.program, self.program_version, 5)
 
         unpacker = nfs_pro_v3Unpacker(export)

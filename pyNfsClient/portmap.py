@@ -48,7 +48,7 @@ class Portmap(RPC):
             elif protocol == 0x11:
                 protocol = 'udp'
             else:
-                protocol = 'unknown'.format(protocol)
+                protocol = 'unknown'
 
             _ = {'program': program, 'version': version, 'protocol': protocol, 'port': port}
             if _ not in rpc_map_entries:

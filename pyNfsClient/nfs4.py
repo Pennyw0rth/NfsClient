@@ -4,7 +4,7 @@ import logging
 import os
 import secrets
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import const as v3
 from . import nfs4_const as const
@@ -73,8 +73,10 @@ SEQUENCE_RETRY_STATUSES = frozenset(
         const.NFS4ERR_BADXDR,
         const.NFS4ERR_RESOURCE,
         const.NFS4ERR_NOFILEHANDLE,
+        const.NFS4ERR_MOVED,
     }
 )
+EXPLICIT_AUTH_NONE = object()
 logger = logging.getLogger(__package__)
 
 
@@ -256,6 +258,14 @@ class LockedFile4:
     seqid: int = 1
 
 
+@dataclass(slots=True)
+class OpenOwnerState4:
+    auth: object
+    owner: bytes | None = None
+    seqid: int = 0
+    opened: dict = field(default_factory=dict)
+
+
 class NFSv4(RPC):
     """NFSv4.0 client which connects directly to the server's NFS port."""
 
@@ -266,14 +276,81 @@ class NFSv4(RPC):
         self.client_name = None
         self.client_name_nonce = secrets.token_hex(8)
         self.client_verifier = None
-        self.open_owner = None
-        self.open_seqid = 0
+        self.open_owner_name = None
+        self.open_owner_index = 0
+        self.open_states = {}
         self.locations = {}
-        self.opened = {}
         self.lock_seqids = {}
 
+    def effective_auth(self, auth):
+        if auth is EXPLICIT_AUTH_NONE:
+            return None
+        return self.auth if auth is None else auth
+
+    @staticmethod
+    def saved_auth(auth):
+        return EXPLICIT_AUTH_NONE if auth is None else auth
+
+    @staticmethod
+    def auth_identity(auth):
+        if isinstance(auth, dict):
+            return (auth.get("flavor"), str_to_bytes(auth.get("machine_name", b"")), auth.get("uid"), auth.get("gid"), tuple(auth.get("aux_gid", ())))
+        return id(auth)
+
+    @staticmethod
+    def auth_snapshot(auth):
+        if not isinstance(auth, dict):
+            return auth
+        auth = dict(auth)
+        auth["aux_gid"] = tuple(auth.get("aux_gid", ()))
+        return auth
+
+    def next_open_owner(self):
+        owner = self.open_owner_name
+        if self.open_owner_index:
+            owner += b":" + str(self.open_owner_index).encode()
+        self.open_owner_index += 1
+        return owner
+
+    def open_state(self, auth=None, create=True):
+        auth = self.effective_auth(auth)
+        identity = self.auth_identity(auth)
+        if identity not in self.open_states and create:
+            self.open_states[identity] = OpenOwnerState4(self.auth_snapshot(auth), self.next_open_owner() if self.open_owner_name is not None else None)
+        elif identity in self.open_states and self.open_states[identity].owner is None and self.open_owner_name is not None:
+            self.open_states[identity].owner = self.next_open_owner()
+        return self.open_states.get(identity)
+
+    @property
+    def open_owner(self):
+        return self.open_state().owner
+
+    @open_owner.setter
+    def open_owner(self, owner):
+        self.open_owner_name = owner.encode() if isinstance(owner, str) else owner
+        self.open_owner_index = 0
+        for state in self.open_states.values():
+            state.owner = None
+        self.open_state()
+
+    @property
+    def open_seqid(self):
+        return self.open_state().seqid
+
+    @open_seqid.setter
+    def open_seqid(self, seqid):
+        self.open_state().seqid = seqid
+
+    @property
+    def opened(self):
+        return self.open_state().opened
+
+    @opened.setter
+    def opened(self, opened):
+        self.open_state().opened = opened
+
     def nfs_request(self, procedure, args, auth):
-        return super().request(const.NFS_PROGRAM, const.NFS_V4, procedure, data=args, auth=self.auth if auth is None else auth)
+        return super().request(const.NFS_PROGRAM, const.NFS_V4, procedure, data=args, auth=self.effective_auth(auth))
 
     def null(self):
         self.nfs_request(const.NFS4_PROCEDURE_NULL, b"", self.auth)
@@ -283,7 +360,7 @@ class NFSv4(RPC):
         operations = tuple(operations)
         packer = NFS4Packer()
         packer.pack_compound_args(types.Compound4Args(tag=tag, argarray=operations))
-        unpacker = NFS4Unpacker(self.nfs_request(const.NFS4_PROCEDURE_COMPOUND, packer.get_buffer(), self.auth if auth is None else auth))
+        unpacker = NFS4Unpacker(self.nfs_request(const.NFS4_PROCEDURE_COMPOUND, packer.get_buffer(), auth))
         response = unpacker.unpack_compound_res()
         unpacker.done()
         self.check_response(operations, response, check)
@@ -339,13 +416,14 @@ class NFSv4(RPC):
         )
 
     def sequenced_filehandle(self, filehandle, operation, *operations, tag=b"", auth=None):
+        state = self.require_client(auth)
         try:
             response = self.with_filehandle(filehandle, operation, *operations, tag=tag, auth=auth)
         except NFS4Error as e:
             if e.index is not None and (e.index > 1 or e.index == 1 and e.status not in SEQUENCE_RETRY_STATUSES):
-                self.open_seqid = (self.open_seqid + 1) & 0xFFFFFFFF
+                state.seqid = (state.seqid + 1) & 0xFFFFFFFF
             raise
-        self.open_seqid = (self.open_seqid + 1) & 0xFFFFFFFF
+        state.seqid = (state.seqid + 1) & 0xFFFFFFFF
         return response
 
     @staticmethod
@@ -520,13 +598,16 @@ class NFSv4(RPC):
             tag=b"setclientid-confirm",
             auth=auth,
         )
-        self.open_owner = (open_owner.encode() if isinstance(open_owner, str) else open_owner) or client_name
-        self.open_seqid = 0
+        self.open_owner_name = (open_owner.encode() if isinstance(open_owner, str) else open_owner) or client_name
+        self.open_owner_index = 0
+        self.open_states.clear()
+        self.open_state(auth)
         return self.clientid
 
-    def require_client(self):
-        if self.clientid is None or self.open_owner is None:
+    def require_client(self, auth=None):
+        if self.clientid is None or self.open_owner_name is None:
             raise RuntimeError("SETCLIENTID must be confirmed before using NFSv4 state")
+        return self.open_state(auth)
 
     def open_file(
         self,
@@ -538,12 +619,12 @@ class NFSv4(RPC):
         claim=None,
         auth=None,
     ):
-        self.require_client()
+        state = self.require_client(auth)
         if claim is None:
             claim = types.OpenClaim4(const.CLAIM_NULL, file=name)
         response = self.sequenced_filehandle(
             parent_filehandle,
-            self.open_op(self.open_seqid, share_access, share_deny, types.OpenOwner4(self.clientid, self.open_owner), openhow, claim),
+            self.open_op(state.seqid, share_access, share_deny, types.OpenOwner4(self.clientid, state.owner), openhow, claim),
             self.getfh_op(),
             tag=b"open",
             auth=auth,
@@ -552,7 +633,7 @@ class NFSv4(RPC):
         filehandle = self.operation_result(response, const.OP_GETFH)
         stateid = open_result.stateid
         if open_result.rflags & const.OPEN4_RESULT_CONFIRM:
-            response = self.sequenced_filehandle(filehandle, self.open_confirm_op(stateid, self.open_seqid), tag=b"open-confirm", auth=auth)
+            response = self.sequenced_filehandle(filehandle, self.open_confirm_op(stateid, state.seqid), tag=b"open-confirm", auth=auth)
             stateid = self.operation_result(response, const.OP_OPEN_CONFIRM)
         if open_result.delegation.delegation_type != const.OPEN_DELEGATE_NONE:
             self.with_filehandle(filehandle, self.delegreturn_op(self.delegation_stateid(open_result.delegation)), tag=b"delegreturn", auth=auth)
@@ -567,12 +648,14 @@ class NFSv4(RPC):
         raise ValueError("OPEN result does not contain a delegation")
 
     def close_file(self, opened_file, auth=None):
-        response = self.sequenced_filehandle(opened_file.filehandle, self.close_op(self.open_seqid, opened_file.stateid), tag=b"close", auth=auth)
+        state = self.require_client(auth)
+        response = self.sequenced_filehandle(opened_file.filehandle, self.close_op(state.seqid, opened_file.stateid), tag=b"close", auth=auth)
         return self.operation_result(response, const.OP_CLOSE)
 
-    def downgrade_file(self, opened_file, share_access, share_deny):
+    def downgrade_file(self, opened_file, share_access, share_deny, auth=None):
+        state = self.require_client(auth)
         response = self.sequenced_filehandle(
-            opened_file.filehandle, self.open_downgrade_op(opened_file.stateid, self.open_seqid, share_access, share_deny), tag=b"open-downgrade"
+            opened_file.filehandle, self.open_downgrade_op(opened_file.stateid, state.seqid, share_access, share_deny), tag=b"open-downgrade", auth=auth
         )
         return OpenFile4(opened_file.filehandle, self.operation_result(response, const.OP_OPEN_DOWNGRADE), share_access, share_deny)
 
@@ -580,49 +663,49 @@ class NFSv4(RPC):
         self.require_client()
         self.compound((self.renew_op(self.clientid),), tag=b"renew")
 
-    def acquire_lock(self, opened_file, owner, locktype=const.WRITE_LT, offset=0, length=0xFFFFFFFFFFFFFFFF, reclaim=False):
-        self.require_client()
+    def acquire_lock(self, opened_file, owner, locktype=const.WRITE_LT, offset=0, length=0xFFFFFFFFFFFFFFFF, reclaim=False, auth=None):
+        state = self.require_client(auth)
         if isinstance(owner, str):
             owner = owner.encode()
         lock_owner = types.LockOwner4(self.clientid, owner)
         response = self.sequenced_filehandle(
             opened_file.filehandle,
-            self.lock_op(
-                locktype, reclaim, offset, length, types.Locker4(True, open_owner=types.OpenToLockOwner4(self.open_seqid, opened_file.stateid, 0, lock_owner))
-            ),
+            self.lock_op(locktype, reclaim, offset, length, types.Locker4(True, open_owner=types.OpenToLockOwner4(state.seqid, opened_file.stateid, 0, lock_owner))),
             tag=b"lock",
+            auth=auth,
         )
         return LockedFile4(opened_file.filehandle, self.operation_result(response, const.OP_LOCK), lock_owner)
 
-    def unlock(self, locked_file, locktype=const.WRITE_LT, offset=0, length=0xFFFFFFFFFFFFFFFF):
-        lock_seqid = self.lock_seqids.get(locked_file.owner, locked_file.seqid)
+    def unlock(self, locked_file, locktype=const.WRITE_LT, offset=0, length=0xFFFFFFFFFFFFFFFF, auth=None):
+        lock_key = (self.auth_identity(self.effective_auth(auth)), locked_file.owner)
+        lock_seqid = self.lock_seqids.get(lock_key, locked_file.seqid)
         try:
-            response = self.with_filehandle(locked_file.filehandle, self.locku_op(locktype, lock_seqid, locked_file.stateid, offset, length), tag=b"locku")
+            response = self.with_filehandle(locked_file.filehandle, self.locku_op(locktype, lock_seqid, locked_file.stateid, offset, length), tag=b"locku", auth=auth)
         except NFS4Error as e:
             if e.index is not None and (e.index > 1 or e.index == 1 and e.status not in SEQUENCE_RETRY_STATUSES):
-                self.lock_seqids[locked_file.owner] = (lock_seqid + 1) & 0xFFFFFFFF
+                self.lock_seqids[lock_key] = (lock_seqid + 1) & 0xFFFFFFFF
             raise
-        self.lock_seqids[locked_file.owner] = (lock_seqid + 1) & 0xFFFFFFFF
-        return LockedFile4(locked_file.filehandle, self.operation_result(response, const.OP_LOCKU), locked_file.owner, self.lock_seqids[locked_file.owner])
+        self.lock_seqids[lock_key] = (lock_seqid + 1) & 0xFFFFFFFF
+        return LockedFile4(locked_file.filehandle, self.operation_result(response, const.OP_LOCKU), locked_file.owner, self.lock_seqids[lock_key])
 
-    def test_lock(self, filehandle, owner, locktype=const.WRITE_LT, offset=0, length=0xFFFFFFFFFFFFFFFF):
-        self.require_client()
+    def test_lock(self, filehandle, owner, locktype=const.WRITE_LT, offset=0, length=0xFFFFFFFFFFFFFFFF, auth=None):
+        self.require_client(auth)
         if isinstance(owner, str):
             owner = owner.encode()
-        response = self.with_filehandle(filehandle, self.lockt_op(locktype, offset, length, types.LockOwner4(self.clientid, owner)), tag=b"lockt", check=False)
+        response = self.with_filehandle(filehandle, self.lockt_op(locktype, offset, length, types.LockOwner4(self.clientid, owner)), tag=b"lockt", auth=auth, check=False)
         if response.status == const.NFS4_OK:
             return None
         if response.status != const.NFS4ERR_DENIED:
             raise NFS4Error(response.status, const.OP_LOCKT, len(response.resarray) - 1, response)
         return self.operation_result(response, const.OP_LOCKT)
 
-    def release_lock_owner(self, owner):
-        self.require_client()
+    def release_lock_owner(self, owner, auth=None):
+        self.require_client(auth)
         if isinstance(owner, str):
             owner = owner.encode()
         lock_owner = types.LockOwner4(self.clientid, owner)
-        self.compound((self.release_lockowner_op(lock_owner),), tag=b"release-lockowner")
-        self.lock_seqids.pop(lock_owner, None)
+        self.compound((self.release_lockowner_op(lock_owner),), tag=b"release-lockowner", auth=auth)
+        self.lock_seqids.pop((self.auth_identity(self.effective_auth(auth)), lock_owner), None)
 
     def root_filehandle(self, auth=None):
         response = self.with_root(self.getfh_op(), tag=b"rootfh", auth=auth, check=False)
@@ -647,36 +730,47 @@ class NFSv4(RPC):
         )
 
     def ensure_client(self, auth=None):
-        if self.clientid is None or self.open_owner is None:
+        if self.clientid is None or self.open_owner_name is None:
             self.establish_client(auth=auth)
+        return self.require_client(auth)
 
     def ensure_open(self, file_handle, share_access, auth=None):
-        if file_handle in self.opened and self.opened[file_handle].share_access & share_access == share_access:
-            return self.opened[file_handle]
+        state = self.open_state(auth, create=False)
+        if state is not None and file_handle in state.opened and state.opened[file_handle].share_access & share_access == share_access:
+            return state.opened[file_handle]
         if file_handle not in self.locations:
             return OpenFile4(file_handle, types.Stateid4(), share_access, const.OPEN4_SHARE_DENY_NONE)
-        self.ensure_client(auth)
-        self.opened[file_handle] = self.open_file(
-            *self.locations[file_handle], share_access | (self.opened[file_handle].share_access if file_handle in self.opened else 0), auth=auth
-        )
-        return self.opened[file_handle]
+        state = self.ensure_client(auth)
+        opened_file = self.open_file(*self.locations[file_handle], share_access | (state.opened[file_handle].share_access if file_handle in state.opened else 0), auth=auth)
+        if opened_file.filehandle != file_handle:
+            self.locations.pop(file_handle, None)
+            state.opened[opened_file.filehandle] = opened_file
+            try:
+                self.close_handle(opened_file.filehandle, auth)
+            except NFS4Error as e:
+                logger.debug("Unable to close replacement handle %r: %s", opened_file.filehandle, e)
+            return OpenFile4(file_handle, types.Stateid4(), share_access, const.OPEN4_SHARE_DENY_NONE)
+        state.opened[file_handle] = opened_file
+        return opened_file
 
     def close_handle(self, file_handle, auth=None):
-        if file_handle not in self.opened:
+        state = self.open_state(auth, create=False)
+        if state is None or file_handle not in state.opened:
             return False
-        self.close_file(self.opened[file_handle], auth)
-        self.opened.pop(file_handle)
+        self.close_file(state.opened[file_handle], auth)
+        state.opened.pop(file_handle)
         return True
 
     def disconnect(self):
         if self.client is not None:
-            for file_handle in tuple(self.opened):
-                try:
-                    self.close_handle(file_handle)
-                except Exception as e:
-                    logger.debug("Unable to close NFSv4 state for %r: %s", file_handle, e)
+            for state in tuple(self.open_states.values()):
+                for file_handle in tuple(state.opened):
+                    try:
+                        self.close_handle(file_handle, self.saved_auth(state.auth))
+                    except Exception as e:
+                        logger.debug("Unable to close NFSv4 state for %r: %s", file_handle, e)
         self.locations.clear()
-        self.opened.clear()
+        self.open_states.clear()
         self.lock_seqids.clear()
         super().disconnect()
 
@@ -887,7 +981,7 @@ class NFSv4(RPC):
         parent_status, parent_before = self.get_attributes4(dir_handle, auth=auth)
         create_attributes = nfs4_attributes(mode, uid, gid, size, atime_flag, atime_s, atime_us, mtime_flag, mtime_s, mtime_us)
         try:
-            self.ensure_client(auth)
+            state = self.ensure_client(auth)
             opened_file = self.open_file(
                 dir_handle,
                 str_to_bytes(file_name),
@@ -905,7 +999,7 @@ class NFSv4(RPC):
         except NFS4Error as e:
             return response_failure(e.status, wcc_data(before=parent_before if parent_status == const.NFS4_OK else None))
         self.locations[opened_file.filehandle] = (dir_handle, str_to_bytes(file_name))
-        self.opened[opened_file.filehandle] = opened_file
+        state.opened[opened_file.filehandle] = opened_file
         if create_mode == v3.EXCLUSIVE:
             response = self.with_filehandle(
                 opened_file.filehandle, self.setattr_op(opened_file.stateid, create_attributes), tag=b"exclusive-create-setattr", auth=auth, check=False
@@ -1015,10 +1109,11 @@ class NFSv4(RPC):
         )
 
     def remove_name(self, dir_handle, name, auth=None):
+        state = self.open_state(auth, create=False)
         for file_handle, location in tuple(self.locations.items()):
-            if location == (dir_handle, str_to_bytes(name)):
+            if state is not None and location == (dir_handle, str_to_bytes(name)):
                 try:
-                    self.close_handle(file_handle, auth)
+                    self.close_handle(file_handle, self.saved_auth(state.auth))
                 except NFS4Error as e:
                     logger.debug("Unable to close %r before REMOVE: %s", file_handle, e)
         response = self.with_filehandle(
@@ -1037,7 +1132,6 @@ class NFSv4(RPC):
         for file_handle, location in tuple(self.locations.items()):
             if location == (dir_handle, str_to_bytes(name)):
                 self.locations.pop(file_handle, None)
-                self.opened.pop(file_handle, None)
         return {
             "status": status,
             "resok": wcc_data(attributes[1] if len(attributes) > 1 else None, attributes[0]),

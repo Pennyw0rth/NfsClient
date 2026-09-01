@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from pyNfsClient import nfs4_const as const
 from pyNfsClient import nfs4_types as types
@@ -39,7 +39,7 @@ class MockNFSv4(NFSv4):
         self.calls = []
 
     def nfs_request(self, procedure, args, auth):
-        self.calls.append((procedure, args, auth))
+        self.calls.append((procedure, args, self.effective_auth(auth)))
         return self.responses.pop(0)
 
 
@@ -215,6 +215,156 @@ class NFSv4ClientTests(unittest.TestCase):
             client.open_file(b"parent", b"file")
         self.assertEqual(client.open_seqid, 0)
 
+        client = MockNFSv4(
+            response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_OPEN, const.NFS4ERR_MOVED), status=const.NFS4ERR_MOVED)
+        )
+        client.clientid = 77
+        client.open_owner = b"owner"
+        with self.assertRaises(NFS4Error):
+            client.open_file(b"parent", b"file")
+        self.assertEqual(client.open_seqid, 0)
+
+    def test_open_state_is_isolated_by_authentication_principal(self):
+        auth = {
+            "flavor": const.AUTH_SYS,
+            "machine_name": "client.example",
+            "uid": 1000,
+            "gid": 100,
+            "aux_gid": [101],
+        }
+        client = MockNFSv4(
+            response(
+                types.ResOp4(const.OP_PUTFH, const.NFS4_OK),
+                types.ResOp4(const.OP_OPEN, const.NFS4_OK, types.Open4Res(STATEID, CHANGE, 0, types.Bitmap4())),
+                types.ResOp4(const.OP_GETFH, const.NFS4_OK, b"file"),
+            ),
+            response(
+                types.ResOp4(const.OP_PUTFH, const.NFS4_OK),
+                types.ResOp4(const.OP_OPEN, const.NFS4_OK, types.Open4Res(NEXT_STATEID, CHANGE, 0, types.Bitmap4())),
+                types.ResOp4(const.OP_GETFH, const.NFS4_OK, b"file"),
+            ),
+            response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_CLOSE, const.NFS4_OK, STATEID)),
+        )
+        client.auth = auth
+        client.clientid = 77
+        client.open_owner = b"owner"
+        client.locations[b"file"] = (b"parent", b"file")
+
+        first = client.ensure_open(b"file", const.OPEN4_SHARE_ACCESS_READ)
+        first_auth = dict(auth)
+        first_auth["aux_gid"] = list(auth["aux_gid"])
+        auth["uid"] = 2000
+        second = client.ensure_open(b"file", const.OPEN4_SHARE_ACCESS_READ)
+
+        first_state = client.open_state(first_auth, create=False)
+        second_state = client.open_state(create=False)
+        self.assertIsNot(first_state, second_state)
+        self.assertEqual(first_state.auth["uid"], 1000)
+        self.assertEqual(first_state.opened[b"file"], first)
+        self.assertEqual(second_state.opened[b"file"], second)
+        self.assertEqual((first_state.seqid, second_state.seqid), (1, 1))
+        first_open = decode_call(client.calls[0][1]).argarray[1].arg
+        second_open = decode_call(client.calls[1][1]).argarray[1].arg
+        self.assertEqual((first_open.seqid, second_open.seqid), (0, 0))
+        self.assertEqual((first_open.owner.owner, second_open.owner.owner), (b"owner", b"owner:1"))
+        self.assertEqual(client.ensure_open(b"file", const.OPEN4_SHARE_ACCESS_READ, first_auth), first)
+        self.assertTrue(client.close_handle(b"file", first_auth))
+        self.assertNotIn(b"file", first_state.opened)
+        self.assertIn(b"file", second_state.opened)
+        self.assertEqual(decode_call(client.calls[2][1]).argarray[1].arg.seqid, 1)
+
+    def test_object_authentication_overrides_have_separate_open_state(self):
+        client = MockNFSv4()
+        client.clientid = 77
+        client.open_owner = b"owner"
+        first_auth = object()
+        second_auth = object()
+
+        self.assertIsNot(client.require_client(first_auth), client.require_client(second_auth))
+        self.assertNotEqual(client.require_client(first_auth).owner, client.require_client(second_auth).owner)
+
+    def test_disconnect_closes_saved_auth_none_state_after_default_auth_changes(self):
+        client = MockNFSv4(response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_CLOSE, const.NFS4_OK, NEXT_STATEID)))
+        client.clientid = 77
+        client.open_owner = b"owner"
+        client.opened[b"file"] = OpenFile4(b"file", STATEID, const.OPEN4_SHARE_ACCESS_READ, const.OPEN4_SHARE_DENY_NONE)
+        client.auth = {
+            "flavor": const.AUTH_SYS,
+            "machine_name": "client.example",
+            "uid": 2000,
+            "gid": 200,
+            "aux_gid": [],
+        }
+        client.client = Mock()
+
+        client.disconnect()
+
+        self.assertIsNone(client.calls[0][2])
+        self.assertEqual(decode_call(client.calls[0][1]).argarray[1].arg.seqid, 0)
+
+    def test_remove_closes_only_the_calling_principals_state(self):
+        attributes = types.Fattr4({const.FATTR4_TYPE: const.NF4DIR})
+        first_auth = {
+            "flavor": const.AUTH_SYS,
+            "machine_name": "client.example",
+            "uid": 1000,
+            "gid": 100,
+            "aux_gid": [],
+        }
+        second_auth = {**first_auth, "uid": 2000}
+        client = MockNFSv4(
+            response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_CLOSE, const.NFS4_OK, NEXT_STATEID)),
+            response(
+                types.ResOp4(const.OP_PUTFH, const.NFS4_OK),
+                types.ResOp4(const.OP_GETATTR, const.NFS4_OK, attributes),
+                types.ResOp4(const.OP_REMOVE, const.NFS4_OK, CHANGE),
+                types.ResOp4(const.OP_GETATTR, const.NFS4_OK, attributes),
+            ),
+        )
+        client.auth = first_auth
+        client.clientid = 77
+        client.open_owner = b"owner"
+        client.opened[b"file"] = OpenFile4(b"file", STATEID, const.OPEN4_SHARE_ACCESS_READ, const.OPEN4_SHARE_DENY_NONE)
+        client.open_state(second_auth).opened[b"file"] = OpenFile4(b"file", NEXT_STATEID, const.OPEN4_SHARE_ACCESS_READ, const.OPEN4_SHARE_DENY_NONE)
+        client.locations[b"file"] = (b"parent", b"name")
+
+        self.assertEqual(client.remove(b"parent", b"name", second_auth)["status"], const.NFS4_OK)
+
+        self.assertIn(b"file", client.open_state(first_auth).opened)
+        self.assertNotIn(b"file", client.open_state(second_auth).opened)
+        self.assertEqual(client.auth_identity(client.calls[0][2]), client.auth_identity(second_auth))
+        self.assertEqual(client.auth_identity(client.calls[1][2]), client.auth_identity(second_auth))
+
+    def test_ensure_open_rejects_a_replaced_path_handle(self):
+        attributes = types.Fattr4({const.FATTR4_TYPE: const.NF4REG})
+        client = MockNFSv4(
+            response(
+                types.ResOp4(const.OP_PUTFH, const.NFS4_OK),
+                types.ResOp4(const.OP_OPEN, const.NFS4_OK, types.Open4Res(STATEID, CHANGE, 0, types.Bitmap4())),
+                types.ResOp4(const.OP_GETFH, const.NFS4_OK, b"replacement"),
+            ),
+            response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_CLOSE, const.NFS4_OK, NEXT_STATEID)),
+            response(
+                types.ResOp4(const.OP_PUTFH, const.NFS4_OK),
+                types.ResOp4(const.OP_GETATTR, const.NFS4_OK, attributes),
+                types.ResOp4(const.OP_READ, const.NFS4_OK, types.Read4Res(True, b"original data")),
+            ),
+        )
+        client.clientid = 77
+        client.open_owner = b"owner"
+        client.locations[b"original"] = (b"parent", b"name")
+
+        self.assertEqual(client.read(b"original")["resok"]["data"], b"original data")
+
+        self.assertNotIn(b"original", client.locations)
+        self.assertNotIn(b"original", client.opened)
+        self.assertNotIn(b"replacement", client.opened)
+        close_call = decode_call(client.calls[1][1]).argarray
+        read_call = decode_call(client.calls[2][1]).argarray
+        self.assertEqual(close_call[0].arg.object, b"replacement")
+        self.assertEqual(read_call[0].arg.object, b"original")
+        self.assertEqual(read_call[2].arg.stateid, types.Stateid4())
+
     def test_close_failure_retains_open_state_for_retry(self):
         client = MockNFSv4(response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_CLOSE, const.NFS4ERR_DELAY), status=const.NFS4ERR_DELAY))
         client.clientid = 77
@@ -265,18 +415,20 @@ class NFSv4ClientTests(unittest.TestCase):
         self.assertEqual(unlocked_file.seqid, 3)
 
     def test_unlock_does_not_advance_sequence_after_retry_error(self):
-        client = MockNFSv4(
-            response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_LOCKU, const.NFS4ERR_BAD_SEQID), status=const.NFS4ERR_BAD_SEQID),
-            response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_LOCKU, const.NFS4_OK, NEXT_STATEID)),
-        )
-        locked_file = LockedFile4(b"file", STATEID, types.LockOwner4(77, b"owner"))
+        for status in (const.NFS4ERR_BAD_SEQID, const.NFS4ERR_MOVED):
+            with self.subTest(status=status):
+                client = MockNFSv4(
+                    response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_LOCKU, status), status=status),
+                    response(types.ResOp4(const.OP_PUTFH, const.NFS4_OK), types.ResOp4(const.OP_LOCKU, const.NFS4_OK, NEXT_STATEID)),
+                )
+                locked_file = LockedFile4(b"file", STATEID, types.LockOwner4(77, b"owner"))
 
-        with self.assertRaises(NFS4Error):
-            client.unlock(locked_file)
-        client.unlock(locked_file)
+                with self.assertRaises(NFS4Error):
+                    client.unlock(locked_file)
+                client.unlock(locked_file)
 
-        self.assertEqual(decode_call(client.calls[0][1]).argarray[1].arg.seqid, 1)
-        self.assertEqual(decode_call(client.calls[1][1]).argarray[1].arg.seqid, 1)
+                self.assertEqual(decode_call(client.calls[0][1]).argarray[1].arg.seqid, 1)
+                self.assertEqual(decode_call(client.calls[1][1]).argarray[1].arg.seqid, 1)
 
     def test_readdirplus_uses_cookie_and_verifier(self):
         first_entry = types.Entry4(11, b"first", types.Fattr4({const.FATTR4_FILEHANDLE: b"one"}))

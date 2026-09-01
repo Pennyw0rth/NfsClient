@@ -96,7 +96,7 @@ class KerberosGSSContext:
             constants.EncryptionTypes.aes256_cts_hmac_sha1_96.value,
             constants.EncryptionTypes.rc4_hmac.value,
         ):
-            raise ValueError("Unsupported Kerberos GSS enctype 0x%x" % cipher.enctype)
+            raise ValueError(f"Unsupported Kerberos GSS enctype 0x{cipher.enctype:x}")
 
     def validateSequenceNumber(self, sequenceNumber):
         if not isinstance(sequenceNumber, int) or sequenceNumber < 0 or sequenceNumber > self.sequenceMask():
@@ -133,7 +133,7 @@ class KerberosGSSContext:
 
     def validateReceivedSequence(self, sequenceNumber):
         if sequenceNumber != self.receiveSequenceNumber:
-            raise ValueError("Unexpected Kerberos GSS sequence number %d, expected %d" % (sequenceNumber, self.receiveSequenceNumber))
+            raise ValueError(f"Unexpected Kerberos GSS sequence number {sequenceNumber:d}, expected {self.receiveSequenceNumber:d}")
 
     def getAESMIC(self, data):
         header = struct.pack(">HB5sQ", 0x0404, self.tokenFlags(self.isAcceptor), b"\xff" * 5, self.sendSequenceNumber)

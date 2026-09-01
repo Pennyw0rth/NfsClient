@@ -53,13 +53,13 @@ class nfs_pro_v3Packer(Packer):
                         const.NFS3ERR_BADHANDLE, const.NFS3ERR_NOT_SYNC, const.NFS3ERR_BAD_COOKIE,
                         const.NFS3ERR_NOTSUPP, const.NFS3ERR_TOOSMALL, const.NFS3ERR_SERVERFAULT, const.NFS3ERR_BADTYPE,
                         const.NFS3ERR_JUKEBOX]:
-            raise XDRError('value=%s not in enum nfsstat3' % data)
+            raise XDRError(f'value={data} not in enum nfsstat3')
         self.pack_int(data)
 
     def pack_ftype3(self, data):
         if data not in [const.NF3REG, const.NF3DIR, const.NF3BLK, const.NF3CHR, const.NF3LNK, const.NF3SOCK,
                         const.NF3FIFO]:
-            raise XDRError('value=%s not in enum ftype3' % data)
+            raise XDRError(f'value={data} not in enum ftype3')
         self.pack_int(data)
 
     def pack_specdata3(self, data):
@@ -137,7 +137,7 @@ class nfs_pro_v3Packer(Packer):
         elif data.present == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.present)
+            raise XDRError(f'bad switch={data.present}')
 
     def pack_wcc_attr(self, data):
         if data.size is None:
@@ -161,7 +161,7 @@ class nfs_pro_v3Packer(Packer):
         elif data.present == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.present)
+            raise XDRError(f'bad switch={data.present}')
 
     def pack_wcc_data(self, data):
         if data.before is None:
@@ -182,7 +182,7 @@ class nfs_pro_v3Packer(Packer):
         elif data.present == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.present)
+            raise XDRError(f'bad switch={data.present}')
 
     def pack_set_uint32(self, data):
         if data.set is None:
@@ -208,7 +208,7 @@ class nfs_pro_v3Packer(Packer):
 
     def pack_time_how(self, data):
         if data not in [const.DONT_CHANGE, const.SET_TO_SERVER_TIME, const.SET_TO_CLIENT_TIME]:
-            raise XDRError('value=%s not in enum time_how' % data)
+            raise XDRError(f'value={data} not in enum time_how')
         self.pack_int(data)
 
     def pack_set_time(self, data):
@@ -307,7 +307,7 @@ class nfs_pro_v3Packer(Packer):
         elif data.check == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.check)
+            raise XDRError(f'bad switch={data.check}')
 
     def pack_setattr3args(self, data):
         if data.object is None:
@@ -434,7 +434,7 @@ class nfs_pro_v3Packer(Packer):
 
     def pack_stable_how(self, data):
         if data not in [const.UNSTABLE, const.DATA_SYNC, const.FILE_SYNC]:
-            raise XDRError('value=%s not in enum stable_how' % data)
+            raise XDRError(f'value={data} not in enum stable_how')
         self.pack_int(data)
 
     def pack_write3args(self, data):
@@ -483,7 +483,7 @@ class nfs_pro_v3Packer(Packer):
 
     def pack_createmode3(self, data):
         if data not in [const.UNCHECKED, const.GUARDED, const.EXCLUSIVE]:
-            raise XDRError('value=%s not in enum createmode3' % data)
+            raise XDRError(f'value={data} not in enum createmode3')
         self.pack_int(data)
 
     def pack_createhow3(self, data):
@@ -499,7 +499,7 @@ class nfs_pro_v3Packer(Packer):
                 raise TypeError('data.verf == None')
             self.pack_createverf3(data.verf)
         else:
-            raise XDRError('bad switch=%s' % data.mode)
+            raise XDRError(f'bad switch={data.mode}')
 
     def pack_create3args(self, data):
         if data.where is None:
@@ -937,7 +937,7 @@ class nfs_pro_v3Packer(Packer):
         if data not in [const.MNT3_OK, const.MNT3ERR_PERM, const.MNT3ERR_NOENT, const.MNT3ERR_IO, const.MNT3ERR_ACCES,
                         const.MNT3ERR_NOTDIR, const.MNT3ERR_INVAL, const.MNT3ERR_NAMETOOLONG, const.MNT3ERR_NOTSUPP,
                         const.MNT3ERR_SERVERFAULT]:
-            raise XDRError('value=%s not in enum mountstat3' % data)
+            raise XDRError(f'value={data} not in enum mountstat3')
         self.pack_int(data)
 
     def pack_mountres3_ok(self, data):
@@ -1057,14 +1057,14 @@ class nfs_pro_v3Unpacker(Unpacker):
                         const.NFS3ERR_BADHANDLE, const.NFS3ERR_NOT_SYNC, const.NFS3ERR_BAD_COOKIE,
                         const.NFS3ERR_NOTSUPP, const.NFS3ERR_TOOSMALL, const.NFS3ERR_SERVERFAULT, const.NFS3ERR_BADTYPE,
                         const.NFS3ERR_JUKEBOX]:
-            raise XDRError('value=%s not in enum nfsstat3' % data)
+            raise XDRError(f'value={data} not in enum nfsstat3')
         return data
 
     def unpack_ftype3(self):
         data = self.unpack_int()
         if data not in [const.NF3REG, const.NF3DIR, const.NF3BLK, const.NF3CHR, const.NF3LNK, const.NF3SOCK,
                         const.NF3FIFO]:
-            raise XDRError('value=%s not in enum ftype3' % data)
+            raise XDRError(f'value={data} not in enum ftype3')
         return data
 
     def unpack_specdata3(self, data_format='json'):
@@ -1111,7 +1111,7 @@ class nfs_pro_v3Unpacker(Unpacker):
         elif data.present == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.present)
+            raise XDRError(f'bad switch={data.present}')
         return data.__dict__ if data_format == 'json' else data
 
     def unpack_wcc_attr(self, data_format='json'):
@@ -1129,7 +1129,7 @@ class nfs_pro_v3Unpacker(Unpacker):
         elif data.present == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.present)
+            raise XDRError(f'bad switch={data.present}')
         return data.__dict__ if data_format == 'json' else data
 
     def unpack_wcc_data(self, data_format='json'):
@@ -1146,7 +1146,7 @@ class nfs_pro_v3Unpacker(Unpacker):
         elif data.present == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.present)
+            raise XDRError(f'bad switch={data.present}')
         return data.__dict__ if data_format == 'json' else data
 
     def unpack_set_uint32(self, data_format='json'):
@@ -1170,7 +1170,7 @@ class nfs_pro_v3Unpacker(Unpacker):
     def unpack_time_how(self):
         data = self.unpack_int()
         if data not in [const.DONT_CHANGE, const.SET_TO_SERVER_TIME, const.SET_TO_CLIENT_TIME]:
-            raise XDRError('value=%s not in enum time_how' % data)
+            raise XDRError(f'value={data} not in enum time_how')
         return data
 
     def unpack_set_time(self, data_format='json'):
@@ -1240,7 +1240,7 @@ class nfs_pro_v3Unpacker(Unpacker):
         elif data.check == const.FALSE:
             pass
         else:
-            raise XDRError('bad switch=%s' % data.check)
+            raise XDRError(f'bad switch={data.check}')
         return data.__dict__ if data_format == 'json' else data
 
     def unpack_setattr3args(self, data_format='json'):
@@ -1348,7 +1348,7 @@ class nfs_pro_v3Unpacker(Unpacker):
     def unpack_stable_how(self):
         data = self.unpack_int()
         if data not in [const.UNSTABLE, const.DATA_SYNC, const.FILE_SYNC]:
-            raise XDRError('value=%s not in enum stable_how' % data)
+            raise XDRError(f'value={data} not in enum stable_how')
         return data
 
     def unpack_write3args(self, data_format='json'):
@@ -1380,7 +1380,7 @@ class nfs_pro_v3Unpacker(Unpacker):
     def unpack_createmode3(self):
         data = self.unpack_int()
         if data not in [const.UNCHECKED, const.GUARDED, const.EXCLUSIVE]:
-            raise XDRError('value=%s not in enum createmode3' % data)
+            raise XDRError(f'value={data} not in enum createmode3')
         return data
 
     def unpack_createhow3(self, data_format='json'):
@@ -1391,7 +1391,7 @@ class nfs_pro_v3Unpacker(Unpacker):
         elif data.mode == const.EXCLUSIVE:
             data.verf = self.unpack_createverf3()
         else:
-            raise XDRError('bad switch=%s' % data.mode)
+            raise XDRError(f'bad switch={data.mode}')
         return data.__dict__ if data_format == 'json' else data
 
     def unpack_create3args(self, data_format='json'):
@@ -1714,7 +1714,7 @@ class nfs_pro_v3Unpacker(Unpacker):
         if data not in [const.MNT3_OK, const.MNT3ERR_PERM, const.MNT3ERR_NOENT, const.MNT3ERR_IO, const.MNT3ERR_ACCES,
                         const.MNT3ERR_NOTDIR, const.MNT3ERR_INVAL, const.MNT3ERR_NAMETOOLONG, const.MNT3ERR_NOTSUPP,
                         const.MNT3ERR_SERVERFAULT]:
-            raise XDRError('value=%s not in enum mountstat3' % data)
+            raise XDRError(f'value={data} not in enum mountstat3')
         return data
 
     def unpack_mountres3_ok(self, data_format='json'):

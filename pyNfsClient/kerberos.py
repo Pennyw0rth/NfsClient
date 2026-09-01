@@ -6,21 +6,31 @@ import socket
 import struct
 from binascii import unhexlify
 
-from pyasn1.codec.der import decoder, encoder
-from pyasn1.type.univ import noValue
-
 from impacket.krb5 import constants
-from impacket.krb5.asn1 import AP_REP, AP_REQ, Authenticator, EncAPRepPart, TGS_REP, seq_set
+from impacket.krb5.asn1 import (
+    AP_REP,
+    AP_REQ,
+    TGS_REP,
+    Authenticator,
+    EncAPRepPart,
+    seq_set,
+)
 from impacket.krb5.ccache import CCache
 from impacket.krb5.crypto import Key, _enctype_table
 from impacket.krb5.gssapi import (
-    CheckSumField, GSS_C_CONF_FLAG, GSS_C_INTEG_FLAG, GSS_C_MUTUAL_FLAG,
-    KRB_OID, MechIndepToken,
+    GSS_C_CONF_FLAG,
+    GSS_C_INTEG_FLAG,
+    GSS_C_MUTUAL_FLAG,
+    KRB_OID,
+    CheckSumField,
+    MechIndepToken,
 )
 from impacket.krb5.kerberosv5 import getKerberosTGS, getKerberosTGT
 from impacket.krb5.keytab import Enctype, Keytab
 from impacket.krb5.types import KerberosTime, Principal, Ticket
 from impacket.spnego import ASN1_AID, ASN1_OID, TypesMech, asn1encode
+from pyasn1.codec.der import decoder, encoder
+from pyasn1.type.univ import noValue
 
 from .gssapi import KRB5_AP_REP, KRB5_AP_REQ, KRB5_ERROR, KerberosGSSContext
 

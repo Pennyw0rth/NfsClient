@@ -1,4 +1,4 @@
-"""Small, typed value objects for the RFC 3530 wire protocol."""
+"""Small, typed value objects for the RFC 7530 wire protocol."""
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping

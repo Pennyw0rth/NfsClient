@@ -28,6 +28,11 @@ def utf8_bytes(value: bytes | str) -> bytes:
 
 
 class NFS4Packer(Packer):
+    minor_versions = frozenset({const.NFS4_MINOR_VERSION})
+    argument_operations = const.NFS4_OPERATIONS
+    result_operations = const.NFS4_RESULT_OPERATIONS
+    statuses = frozenset(const.NFSSTAT4)
+
     def pack_uint32(self, value: int) -> None:
         if not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
             raise NFS4CodecError(f"uint32 out of range: {value!r}")
@@ -213,12 +218,12 @@ class NFS4Packer(Packer):
         elif number in {const.FATTR4_TIME_ACCESS_SET, const.FATTR4_TIME_MODIFY_SET}:
             self.pack_settime(value)
         else:
-            raise NFS4CodecError(f"attribute {number} is not defined by RFC 3530")
+            raise NFS4CodecError(f"attribute {number} is not implemented for NFSv4.0")
 
     def pack_fattr(self, value: types.Fattr4) -> None:
         require(value, types.Fattr4, "attributes")
         self.pack_bitmap(value.attrmask)
-        attr_packer = NFS4Packer()
+        attr_packer = type(self)()
         for number in sorted(value.attributes):
             attr_packer.pack_attribute(number, value.attributes[number])
         self.pack_opaque(attr_packer.get_buffer())
@@ -321,7 +326,7 @@ class NFS4Packer(Packer):
         self.pack_enum4(value, {const.READ_LT, const.WRITE_LT, const.READW_LT, const.WRITEW_LT}, "nfs_lock_type4")
 
     def pack_status(self, value: int) -> None:
-        self.pack_enum4(value, set(const.NFSSTAT4), "nfsstat4")
+        self.pack_enum4(value, self.statuses, "nfsstat4")
 
     def pack_secinfo(self, value: types.SecInfo4) -> None:
         self.pack_uint32(require(value, types.SecInfo4, "security info").flavor)
@@ -344,7 +349,7 @@ class NFS4Packer(Packer):
         self.pack_fattr(value.attrs)
 
     def pack_argop(self, value: types.ArgOp4) -> None:
-        self.pack_enum4(require(value, types.ArgOp4, "argument operation").op, const.NFS4_OPERATIONS, "nfs_opnum4")
+        self.pack_enum4(require(value, types.ArgOp4, "argument operation").op, self.argument_operations, "nfs_opnum4")
         match value.op:
             case const.OP_ACCESS:
                 self.pack_uint32(require(value.arg, types.Access4Args, "ACCESS arguments").access)
@@ -445,8 +450,11 @@ class NFS4Packer(Packer):
             case const.OP_RELEASE_LOCKOWNER:
                 self.pack_lock_owner(require(value.arg, types.ReleaseLockOwner4Args, "RELEASE_LOCKOWNER arguments").lock_owner)
             case _:
-                if value.arg is not None:
-                    raise TypeError(f"operation {value.op} takes no arguments")
+                self.pack_extension_arg(value)
+
+    def pack_extension_arg(self, value: types.ArgOp4) -> None:
+        if value.arg is not None:
+            raise TypeError(f"operation {value.op} takes no arguments")
 
     def pack_result_data(self, value: types.ResOp4) -> None:
         match value.op:
@@ -510,16 +518,21 @@ class NFS4Packer(Packer):
                 self.pack_uint32(require(value.result, types.Write4Res, "WRITE result").count)
                 self.pack_enum4(value.result.committed, {const.UNSTABLE4, const.DATA_SYNC4, const.FILE_SYNC4}, "stable_how4")
                 self.pack_fixed(value.result.writeverf, const.NFS4_VERIFIER_SIZE, "write verifier")
+            case _:
+                self.pack_extension_result(value)
+
+    def pack_extension_result(self, value: types.ResOp4) -> None:
+        pass
 
     def pack_resop(self, value: types.ResOp4) -> None:
-        self.pack_enum4(require(value, types.ResOp4, "result operation").op, const.NFS4_RESULT_OPERATIONS, "nfs_opnum4")
+        self.pack_enum4(require(value, types.ResOp4, "result operation").op, self.result_operations, "nfs_opnum4")
         self.pack_status(value.status)
         self.pack_result_data(value)
 
     def pack_compound_args(self, value: types.Compound4Args) -> None:
         self.pack_utf8(require(value, types.Compound4Args, "COMPOUND arguments").tag)
-        if value.minorversion != const.NFS4_MINOR_VERSION:
-            raise NFS4CodecError("RFC 3530 only defines minor version 0")
+        if value.minorversion not in self.minor_versions:
+            raise NFS4CodecError(f"unsupported NFSv4 minor version {value.minorversion}")
         self.pack_uint32(value.minorversion)
         self.pack_array(value.argarray, self.pack_argop)
 
@@ -533,6 +546,11 @@ class NFS4Packer(Packer):
 
 
 class NFS4Unpacker(Unpacker):
+    minor_versions = NFS4Packer.minor_versions
+    argument_operations = NFS4Packer.argument_operations
+    result_operations = NFS4Packer.result_operations
+    statuses = NFS4Packer.statuses
+
     def unpack_uint32(self) -> int:
         return self.unpack_uint()
 
@@ -693,11 +711,11 @@ class NFS4Unpacker(Unpacker):
             return self.unpack_time()
         if number in {const.FATTR4_TIME_ACCESS_SET, const.FATTR4_TIME_MODIFY_SET}:
             return self.unpack_settime()
-        raise NFS4CodecError(f"attribute {number} is not defined by RFC 3530")
+        raise NFS4CodecError(f"attribute {number} is not implemented for NFSv4.0")
 
     def unpack_fattr(self) -> types.Fattr4:
         attrmask = self.unpack_bitmap()
-        attr_unpacker = NFS4Unpacker(self.unpack_opaque())
+        attr_unpacker = type(self)(self.unpack_opaque())
         attributes = {number: attr_unpacker.unpack_attribute(number) for number in attrmask.bits()}
         attr_unpacker.done()
         return types.Fattr4(attributes)
@@ -783,7 +801,7 @@ class NFS4Unpacker(Unpacker):
         return self.unpack_enum4({const.READ_LT, const.WRITE_LT, const.READW_LT, const.WRITEW_LT}, "nfs_lock_type4")
 
     def unpack_status(self) -> int:
-        return self.unpack_enum4(set(const.NFSSTAT4), "nfsstat4")
+        return self.unpack_int()
 
     def unpack_secinfo(self) -> types.SecInfo4:
         flavor = self.unpack_uint32()
@@ -809,7 +827,7 @@ class NFS4Unpacker(Unpacker):
         return types.Entry4(self.unpack_uint64(), self.unpack_utf8(), self.unpack_fattr())
 
     def unpack_argop(self) -> types.ArgOp4:
-        op = self.unpack_enum4(const.NFS4_OPERATIONS, "nfs_opnum4")
+        op = self.unpack_enum4(self.argument_operations, "nfs_opnum4")
         match op:
             case const.OP_ACCESS:
                 return types.ArgOp4(op, types.Access4Args(self.unpack_uint32()))
@@ -899,7 +917,10 @@ class NFS4Unpacker(Unpacker):
             case const.OP_RELEASE_LOCKOWNER:
                 return types.ArgOp4(op, types.ReleaseLockOwner4Args(self.unpack_lock_owner()))
             case _:
-                return types.ArgOp4(op)
+                return self.unpack_extension_arg(op)
+
+    def unpack_extension_arg(self, op: int) -> types.ArgOp4:
+        return types.ArgOp4(op)
 
     def unpack_result_data(self, op: int, status: int) -> Any:
         match op:
@@ -956,18 +977,21 @@ class NFS4Unpacker(Unpacker):
                     self.unpack_fixed(const.NFS4_VERIFIER_SIZE),
                 )
             case _:
-                return None
+                return self.unpack_extension_result(op, status)
+
+    def unpack_extension_result(self, op: int, status: int) -> Any:
+        return None
 
     def unpack_resop(self) -> types.ResOp4:
-        op = self.unpack_enum4(const.NFS4_RESULT_OPERATIONS, "nfs_opnum4")
+        op = self.unpack_enum4(self.result_operations, "nfs_opnum4")
         status = self.unpack_status()
         return types.ResOp4(op, status, self.unpack_result_data(op, status))
 
     def unpack_compound_args(self) -> types.Compound4Args:
         tag = self.unpack_utf8()
         minorversion = self.unpack_uint32()
-        if minorversion != const.NFS4_MINOR_VERSION:
-            raise NFS4CodecError("RFC 3530 only defines minor version 0")
+        if minorversion not in self.minor_versions:
+            raise NFS4CodecError(f"unsupported NFSv4 minor version {minorversion}")
         return types.Compound4Args(tag, minorversion, tuple(self.unpack_array(self.unpack_argop)))
 
     def unpack_compound_res(self) -> types.Compound4Res:

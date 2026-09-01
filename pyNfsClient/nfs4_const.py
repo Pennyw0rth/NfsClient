@@ -1,4 +1,4 @@
-"""NFSv4.0 constants from RFC 3530."""
+"""NFSv4.0 constants from RFC 7530 and RFC 7531."""
 
 NFS_PROGRAM = 100003
 NFS_V4 = 4

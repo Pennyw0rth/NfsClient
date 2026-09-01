@@ -14,10 +14,10 @@
 - Keep NFSv3 and NFSv4 implementations separate, with shared behavior factored only where it is genuinely version independent.
 - Expose NFSv4.0, NFSv4.1, and NFSv4.2 explicitly as `NFSv40`, `NFSv41`, and `NFSv42`; do not export a legacy `NFSv4` alias.
 - Expose RFC wire-operation builders with an `_op` suffix and execute caller-assembled operations through raw `compound` calls.
-- Do not add or expose an `NFSClient` facade or a top-level version-selecting client.
-- NetExec must import the raw `NFSv3`, `NFSv40`, `NFSv41`, and `NFSv42` objects directly. Do not add an `NFSClient`, `NFSProtocolClient`, or equivalent adapter there.
-- NetExec defaults to NFSv3 so rpcbind can enumerate advertised versions and exports. Exact versions `4.0`, `4.1`, and `4.2` are explicit modes that connect directly to TCP port 2049; do not accept a legacy `4` value.
-- NetExec owns its NFSv4 COMPOUND construction. Keep version branches limited to lifecycle and version-specific state operations where possible.
+- Expose `NFSClient` as the version-explicit generic filesystem client while preserving the raw protocol clients for direct RFC operations. It must not silently select or negotiate a version.
+- Give `NFSClient` the NFSv3 method signatures and response dictionaries for common filesystem operations, and keep NFSv4 state IDs and COMPOUND construction internal to it.
+- NetExec must use `NFSClient` for filesystem and lifecycle operations. Keep version-specific logic there limited to discovery and selecting the exact client version.
+- NetExec automatically prefers NFSv3 when it is advertised and otherwise selects the latest discovered NFSv4 minor version. Exact values `3`, `4.0`, `4.1`, and `4.2` remain available; do not accept a legacy `4` value.
 - Keep NFSv4 clients usable by one-shot processes. Do not require a daemon, callback listener, persistent CLI, or cross-process state service; advertise no callback/backchannel functionality and do not retain delegations.
 - Make the smallest changes needed in third-party projects, including Impacket and NetExec, and integrate them with their existing public interfaces and conventions.
 - Preserve compatibility unless a change is explicitly required by the task.

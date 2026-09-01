@@ -1,7 +1,7 @@
 # pyNfsClient
 
-pyNfsClient is a pure-Python ONC RPC and NFS toolkit. It keeps the existing
-NFSv3 client and exposes explicit raw clients for the three NFSv4 minor
+pyNfsClient is a pure-Python ONC RPC and NFS toolkit. It provides one generic
+filesystem client and explicit raw clients for NFSv3 and the three NFSv4 minor
 versions used by this project.
 
 The project is hosted on [GitHub](https://github.com/Pennyw0rth/NfsClient),
@@ -38,18 +38,38 @@ Impacket.
 
 | Public class | Protocol | Initialization |
 | --- | --- | --- |
+| `NFSClient` | Exact version selected by the caller | Owns transport, state, and common filesystem operations |
 | `NFSv3` | NFSv3 | Existing rpcbind and MOUNT workflow |
 | `NFSv40` | NFSv4.0 | `SETCLIENTID` only when state is needed |
 | `NFSv41` | NFSv4.1 | `EXCHANGE_ID`, `CREATE_SESSION`, and `SEQUENCE` |
 | `NFSv42` | NFSv4.2 | The NFSv4.1 session engine with minor version 2 |
 
-There is no `NFSv4` alias and no version-selecting facade. Callers choose the
-exact protocol class. NFSv4 connects directly to TCP port 2049 and never
-depends on rpcbind, MOUNT, or port 111.
+There is no `NFSv4` alias. `NFSClient` accepts the exact version strings `3`,
+`4.0`, `4.1`, and `4.2`; it does not silently negotiate or fall back. NFSv4
+connects directly to TCP port 2049 and never depends on rpcbind, MOUNT, or port
+111.
 
 ONC RPC messages still use RPC protocol version 2. “NFS version 4” means
 program 100003, program version 4; the COMPOUND `minorversion` field selects
 NFSv4.0, NFSv4.1, or NFSv4.2.
+
+## Generic filesystem client
+
+The generic client exposes NFSv3-shaped methods and response dictionaries for
+common operations such as `lookup`, `getattr`, `readdirplus`, `read`, `write`,
+`create`, `mkdir`, `rename`, and `remove`:
+
+```python
+from pyNfsClient import NFSClient
+
+with NFSClient("nfs.example", "4.1") as client:
+    root = client.root_handle("/")["mountinfo"]["fhandle"]
+    entries = client.readdirplus(root)
+```
+
+The raw clients remain available when an application needs to build RFC
+operations directly. The generic client keeps NFSv4 OPEN state, sequence IDs,
+sessions, and response conversion internal.
 
 ## Version probing
 
@@ -57,19 +77,21 @@ Probing sends a state-free `PUTROOTFH` COMPOUND and does not create a client ID
 or session:
 
 ```python
-from pyNfsClient import discover_minor_versions, probe_minor_version
+from pyNfsClient import discover_nfs_versions, probe_minor_version
 
 print(probe_minor_version("nfs.example", 1))
-print(discover_minor_versions("nfs.example"))
+print(discover_nfs_versions("nfs.example").supported)
 ```
 
-Discovery tests minor versions 2, 1, and 0 independently. Authentication,
-transport, timeout, and malformed-reply failures are raised instead of being
-misreported as unsupported versions.
+Full discovery checks rpcbind for a dynamic NFSv3 endpoint, then probes the
+direct NFS endpoint for NFSv3 and minor versions 2, 1, and 0 independently. Its
+result separates supported versions from inconclusive authentication,
+transport, timeout, and malformed-reply failures. Probing creates no NFSv4
+client ID or session.
 
 ## Raw COMPOUND use
 
-Applications assemble filesystem operations themselves:
+Applications using a raw client assemble filesystem operations themselves:
 
 ```python
 from pyNfsClient import NFSv41
@@ -130,11 +152,10 @@ auth = {
 }
 ```
 
-Per-call authentication overrides are snapshotted before transmission.
-NFSv4.0 open owners and open state are partitioned by the effective principal,
-and prepared state cannot be executed under another identity. Session clients
-do not cache application open state, so callers must likewise keep raw state
-IDs associated with the principal that created them.
+Per-call authentication overrides are snapshotted before transmission. The
+generic client partitions cached NFSv4 OPEN state by the effective principal
+and never reuses a state ID under another identity. Raw callers must likewise
+keep their state IDs associated with the principal that created them.
 
 RPCSEC_GSS supports `krb5`, `krb5i`, and `krb5p`. See
 [Kerberos setup](docs/kerberos.md) for the development-realm procedure and

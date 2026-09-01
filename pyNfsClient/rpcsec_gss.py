@@ -76,10 +76,14 @@ class RPCSECGSSAuth:
         self.service_name = service
         self.service = GSS_SERVICES[service]
         self.sequence = secrets.randbelow(MAXSEQ - 1) + 1 if sequence is None else sequence
-        self.pending_sequence = None
+        self.pending_sequences = []
         self.window = window
         self.procedure = RPCSEC_GSS_DATA
         self.initiator_factory = initiator_factory
+
+    @property
+    def pending_sequence(self):
+        return self.pending_sequences[-1] if self.pending_sequences else None
 
     @classmethod
     def establish(cls, rpc, program, program_version, initiator, service="krb5i", initiator_factory=None):
@@ -122,47 +126,61 @@ class RPCSECGSSAuth:
         return handle, major, minor, window, token
 
     def marshal_call(self, call_header, body):
-        if self.pending_sequence is not None:
+        if self.pending_sequences:
             raise RPCSECGSSError("RPCSEC_GSS authentication object already has an outstanding request")
+        return self.marshal_attempt(call_header, body)
+
+    def marshal_retry(self, call_header, body):
+        """Remarshal an RFC 2203 retry with a fresh credential sequence."""
+        return self.marshal_attempt(call_header, body)
+
+    def marshal_attempt(self, call_header, body):
         if self.sequence >= MAXSEQ:
             raise RPCSECGSSError("RPCSEC_GSS sequence space is exhausted; establish a new context")
 
-        self.pending_sequence = self.sequence
+        self.pending_sequences.append(self.sequence)
         self.sequence += 1
         credential = RPC.pack_opaque_auth(
             RPCSEC_GSS,
             pack_gss_credential(self.procedure, self.pending_sequence, RPC_GSS_SVC_NONE if self.procedure == RPCSEC_GSS_DESTROY else self.service, self.handle),
         )
         signed_header = call_header + credential
-        return signed_header + RPC.pack_opaque_auth(RPCSEC_GSS, self.context.getMIC(signed_header)) + self.protect_body(body)
+        return signed_header + RPC.pack_opaque_auth(RPCSEC_GSS, self.context.getMIC(signed_header)) + self.protect_body(body, self.pending_sequence)
 
-    def protect_body(self, body):
+    def protect_body(self, body, sequence):
         if self.procedure == RPCSEC_GSS_DESTROY or self.service == RPC_GSS_SVC_NONE:
             return body
-        cleartext = struct.pack("!L", self.pending_sequence) + body
+        cleartext = struct.pack("!L", sequence) + body
         if self.service == RPC_GSS_SVC_INTEGRITY:
             return pack_opaque(cleartext) + pack_opaque(self.context.getMIC(cleartext))
         return pack_opaque(self.context.wrap(cleartext))
 
     def process_reply(self, verifier_flavor, verifier, body):
-        self.verify_reply(verifier_flavor, verifier)
-        result = self.unprotect_body(body)
-        self.pending_sequence = None
-        return result
+        body = self.unprotect_body(body, self.verify_reply(verifier_flavor, verifier))
+        self.pending_sequences.clear()
+        return body
 
     def process_error_reply(self, verifier_flavor, verifier):
         self.verify_reply(verifier_flavor, verifier)
-        self.pending_sequence = None
+        self.pending_sequences.clear()
 
     def verify_reply(self, verifier_flavor, verifier):
-        if self.pending_sequence is None:
+        if not self.pending_sequences:
             raise RPCSECGSSError("RPCSEC_GSS reply has no matching request")
         if verifier_flavor != RPCSEC_GSS:
             raise RPCSECGSSError("RPCSEC_GSS reply has an unexpected verifier flavor")
-        self.context.verifyMIC(struct.pack("!L", self.pending_sequence), verifier)
+        failure = None
+        for sequence in self.pending_sequences:
+            try:
+                self.context.verifyMIC(struct.pack("!L", sequence), verifier)
+            except Exception as e:
+                failure = e
+            else:
+                return sequence
+        raise RPCSECGSSError("RPCSEC_GSS reply verifier does not match any request attempt") from failure
 
     def abort_request(self):
-        self.pending_sequence = None
+        self.pending_sequences.clear()
 
     def refresh(self, rpc, program, program_version):
         if self.initiator_factory is None:
@@ -170,7 +188,7 @@ class RPCSECGSSAuth:
         self.abort_request()
         self.__dict__.update(type(self).establish(rpc, program, program_version, self.initiator_factory(), self.service_name, self.initiator_factory).__dict__)
 
-    def unprotect_body(self, body):
+    def unprotect_body(self, body, sequence):
         if self.procedure == RPCSEC_GSS_DESTROY or self.service == RPC_GSS_SVC_NONE:
             return body
         if self.service == RPC_GSS_SVC_INTEGRITY:
@@ -184,7 +202,7 @@ class RPCSECGSSAuth:
             if offset != len(body):
                 raise RPCSECGSSError("trailing bytes in a privacy-protected RPCSEC_GSS reply")
             cleartext = self.context.unwrap(token)
-        if len(cleartext) < 4 or struct.unpack("!L", cleartext[:4])[0] != self.pending_sequence:
+        if len(cleartext) < 4 or struct.unpack("!L", cleartext[:4])[0] != sequence:
             raise RPCSECGSSError("RPCSEC_GSS body sequence does not match its credential")
         return cleartext[4:]
 

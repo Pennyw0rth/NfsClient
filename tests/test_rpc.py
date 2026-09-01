@@ -23,6 +23,24 @@ class FragmentedSocket:
         self.sent += data
 
 
+class RetryingSocket:
+    def __init__(self, reply):
+        self.reply = bytearray(reply)
+        self.sent = []
+        self.timed_out = False
+
+    def recv(self, size):
+        if not self.timed_out:
+            self.timed_out = True
+            raise TimeoutError
+        data = bytes(self.reply[:size])
+        del self.reply[:size]
+        return data
+
+    def sendall(self, data):
+        self.sent.append(data)
+
+
 def split_bytes(data):
     return [data[:1], data[1:3], data[3:7], data[7:11], data[11:]]
 
@@ -80,6 +98,33 @@ def test_request_handles_partial_tcp_reads_and_variable_verifier(monkeypatch):
 
     assert rpc.request(100003, 4, 1, b"args") == b"result"
     assert struct.unpack("!L", rpc.client.sent[:4])[0] == 0x80000000 | (len(rpc.client.sent) - 4)
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        None,
+        {
+            "flavor": 1,
+            "machine_name": "client",
+            "uid": 1000,
+            "gid": 1000,
+            "aux_gid": [],
+        },
+    ],
+)
+def test_prepared_plain_request_reuses_exact_bytes(monkeypatch, auth):
+    monkeypatch.setattr("pyNfsClient.rpc.secrets.randbits", lambda bits: 0x12345678)
+    rpc = RPC("server", 2049, 1)
+    rpc.client = RetryingSocket(accepted_reply(0x12345678, b"result"))
+    prepared = rpc.prepare_request(100003, 4, 1, b"arguments", auth=auth)
+
+    with pytest.raises(TimeoutError):
+        rpc.send_prepared(prepared)
+
+    assert rpc.retransmit(prepared) == b"result"
+    assert rpc.client.sent[0] == rpc.client.sent[1]
+    assert prepared.body == b"arguments"
 
 
 def test_recv_record_reassembles_multiple_fragments():

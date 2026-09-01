@@ -25,6 +25,33 @@ class RPCAuthenticationError(RPCProtocolError):
         super().__init__(f"RPC_AUTH_ERROR: {AUTH_REASON.get(status, status)}")
 
 
+class RPCPreparedRequest:
+    def __init__(self, xid, call_header, body, auth, call):
+        self.xid = xid
+        self.call_header = call_header
+        self.body = body
+        self.auth = auth
+        self.call = call
+        self.reply_size = None
+        self.sent = False
+        self.finished = False
+
+    def retry(self):
+        if self.auth is not None and hasattr(self.auth, "marshal_retry"):
+            self.call = self.auth.marshal_retry(self.call_header, self.body)
+
+    def reset_attempt(self):
+        if self.finished:
+            raise RPCProtocolError("RPC prepared request is already finished")
+        if self.auth is not None and hasattr(self.auth, "abort_request"):
+            self.auth.abort_request()
+
+    def abort(self):
+        if not self.finished and self.auth is not None and hasattr(self.auth, "abort_request"):
+            self.auth.abort_request()
+        self.finished = True
+
+
 class RPC(object):
     """Synchronous ONC RPC client with AUTH_NONE, AUTH_SYS, and auth hooks.
 
@@ -38,7 +65,7 @@ class RPC(object):
     them cryptographically. Stateful mechanisms such as RPCSEC_GSS provide an
     object with ``marshal_call`` and ``process_reply`` methods because their MIC
     must cover exact serialized RPC fields and their replies must be verified.
-    See RFC 2203 Section 5 and RFC 3530 Section 3.
+    See RFC 2203 Section 5 and RFC 7530 Section 3.
     """
 
     connections = []
@@ -53,56 +80,10 @@ class RPC(object):
 
     def request(self, program, program_version, procedure, data=None, message_type=CALL, version=2, auth=None):
         """Encode one RFC 5531 Section 9 CALL and return its validated REPLY."""
-        if self.client is None:
-            raise RPCProtocolError("RPC client is not connected")
-
         retry_context = True
         while True:
             try:
-                xid = secrets.randbits(32)
-                # RFC 5531 Section 9: xid, CALL, RPC version, program, program version, procedure.
-                call_header = struct.pack("!6L", xid, message_type, version, program, program_version, procedure)
-                body = b"" if data is None else data
-                if auth is not None and hasattr(auth, "marshal_call"):
-                    # RFC 2203 Section 5.3.1 signs the fixed header through the credential.
-                    call = auth.marshal_call(call_header, body)
-                else:
-                    # RFC 5531 Section 9 places credential, verifier, and arguments after the fixed CALL fields.
-                    call = call_header + self.pack_credential(auth) + self.pack_opaque_auth(AUTH_NONE, b"") + body
-
-                self.send_record(call)
-                reply = self.recv_record()
-                if len(reply) < 12:
-                    raise RPCProtocolError("RPC reply is shorter than its fixed header")
-
-                # RFC 5531 Section 9 starts every REPLY with xid, REPLY, and the reply-union discriminator.
-                reply_xid, reply_type, reply_state = struct.unpack("!3L", reply[:12])
-                if reply_xid != xid:
-                    raise RPCProtocolError(f"RPC reply XID {reply_xid:#x} does not match call XID {xid:#x}")
-                if reply_type != REPLY:
-                    raise RPCProtocolError(f"expected RPC REPLY, received message type {reply_type}")
-                if reply_state == MSG_DENIED:
-                    self.raise_denied_reply(reply[12:])
-                if reply_state != MSG_ACCEPTED:
-                    raise RPCProtocolError(f"unknown RPC reply state {reply_state}")
-
-                # RFC 5531 Section 9 puts the verifier before accept_status; MSG_ACCEPTED does not imply SUCCESS.
-                # RFC 2203 Section 5.3.3.2 authenticates the matching GSS request sequence with that verifier.
-                verifier_flavor, verifier, offset = self.unpack_opaque_auth(reply, 12)
-                if len(reply) < offset + 4:
-                    raise RPCProtocolError("RPC accepted reply has no acceptance status")
-                accept_status = struct.unpack("!L", reply[offset:offset + 4])[0]
-                if accept_status != SUCCESS:
-                    # RFC 2203 Section 5.3.3.2 still defines the verifier when accept_status is not SUCCESS.
-                    if auth is not None and hasattr(auth, "process_error_reply"):
-                        auth.process_error_reply(verifier_flavor, verifier)
-                    self.raise_accept_error(accept_status, reply[offset + 4:])
-
-                if auth is not None and hasattr(auth, "process_reply"):
-                    # RFC 2203 Sections 5.3.2 and 5.3.3.2 define MIC verification and result unwrapping.
-                    return auth.process_reply(verifier_flavor, verifier, reply[offset + 4:])
-                logger.debug("RPC call succeeded")
-                return reply[offset + 4:]
+                return self.send_prepared(self.prepare_request(program, program_version, procedure, data, message_type, version, auth))
             except RPCAuthenticationError as e:
                 # Release the RFC 2203 sequence state before refreshing or failing.
                 if auth is not None and hasattr(auth, "abort_request"):
@@ -118,13 +99,92 @@ class RPC(object):
                     auth.refresh(self, program, program_version)
                     continue
                 raise
-            except Exception as e:
+            except Exception:
                 if auth is not None and hasattr(auth, "abort_request"):
                     auth.abort_request()
                 raise
 
+    def prepare_request(self, program, program_version, procedure, data=None, message_type=CALL, version=2, auth=None):
+        """Serialize one call so its XID and arguments survive a retransmission."""
+        if self.client is None:
+            raise RPCProtocolError("RPC client is not connected")
+        xid = secrets.randbits(32)
+        # RFC 5531 Section 9: xid, CALL, RPC version, program, program version, procedure.
+        call_header = struct.pack("!6L", xid, message_type, version, program, program_version, procedure)
+        body = b"" if data is None else bytes(data)
+        if auth is not None and hasattr(auth, "marshal_call"):
+            # RFC 2203 Section 5.3.1 signs the fixed header through the credential.
+            call = auth.marshal_call(call_header, body)
+        else:
+            # RFC 5531 Section 9 places credential, verifier, and arguments after the fixed CALL fields.
+            call = call_header + self.pack_credential(auth) + self.pack_opaque_auth(AUTH_NONE, b"") + body
+        return RPCPreparedRequest(xid, call_header, body, auth, call)
+
+    def send_prepared(self, prepared):
+        """Send the first attempt of a prepared call and receive its reply."""
+        if prepared.finished:
+            raise RPCProtocolError("RPC prepared request is already finished")
+        if prepared.sent:
+            raise RPCProtocolError("RPC prepared request was already sent; use retransmit")
+        prepared.sent = True
+        return self.execute_prepared(prepared)
+
+    def retransmit(self, prepared):
+        """Retry the same XID and arguments with authentication-appropriate bytes."""
+        if prepared.finished:
+            raise RPCProtocolError("RPC prepared request is already finished")
+        if not prepared.sent:
+            raise RPCProtocolError("RPC prepared request has not been sent")
+        prepared.retry()
+        return self.execute_prepared(prepared)
+
+    def execute_prepared(self, prepared):
+        self.send_record(prepared.call)
+        reply = self.recv_record()
+        prepared.reply_size = len(reply)
+        if len(reply) < 12:
+            raise RPCProtocolError("RPC reply is shorter than its fixed header")
+
+        # RFC 5531 Section 9 starts every REPLY with xid, REPLY, and the reply-union discriminator.
+        reply_xid, reply_type, reply_state = struct.unpack("!3L", reply[:12])
+        if reply_xid != prepared.xid:
+            raise RPCProtocolError(f"RPC reply XID {reply_xid:#x} does not match call XID {prepared.xid:#x}")
+        if reply_type != REPLY:
+            raise RPCProtocolError(f"expected RPC REPLY, received message type {reply_type}")
+        if reply_state == MSG_DENIED:
+            prepared.abort()
+            self.raise_denied_reply(reply[12:])
+        if reply_state != MSG_ACCEPTED:
+            raise RPCProtocolError(f"unknown RPC reply state {reply_state}")
+
+        # RFC 5531 Section 9 puts the verifier before accept_status; MSG_ACCEPTED does not imply SUCCESS.
+        # RFC 2203 Section 5.3.3.2 authenticates the matching GSS request sequence with that verifier.
+        verifier_flavor, verifier, offset = self.unpack_opaque_auth(reply, 12)
+        if len(reply) < offset + 4:
+            raise RPCProtocolError("RPC accepted reply has no acceptance status")
+        accept_status = struct.unpack("!L", reply[offset:offset + 4])[0]
+        if accept_status != SUCCESS:
+            # RFC 2203 Section 5.3.3.2 still defines the verifier when accept_status is not SUCCESS.
+            if prepared.auth is not None and hasattr(prepared.auth, "process_error_reply"):
+                prepared.auth.process_error_reply(verifier_flavor, verifier)
+            prepared.finished = True
+            self.raise_accept_error(accept_status, reply[offset + 4:])
+
+        if prepared.auth is not None and hasattr(prepared.auth, "process_reply"):
+            # RFC 2203 Sections 5.3.2 and 5.3.3.2 define MIC verification and result unwrapping.
+            result = prepared.auth.process_reply(verifier_flavor, verifier, reply[offset + 4:])
+            prepared.finished = True
+            return result
+        prepared.finished = True
+        logger.debug("RPC call succeeded")
+        return reply[offset + 4:]
+
+    @staticmethod
+    def abort_prepared(prepared):
+        prepared.abort()
+
     def connect(self):
-        # RFC 3530 Section 3.1 requires NFSv4 TCP support; force stream lookup to avoid OS-dependent ordering.
+        # RFC 7530 Section 3.1 requires NFSv4 TCP support; force stream lookup to avoid OS-dependent ordering.
         address_family, socket_type, protocol, canonical_name, socket_address = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)[0]
         self.client = socket.socket(address_family, socket_type)
         self.client.settimeout(self.timeout)
@@ -142,10 +202,10 @@ class RPC(object):
         """
         for attempt in range(120_000):
             try:
-                # Cycle deterministically through reserved ports 1 through 1022.
+                # Cycle deterministically through reserved ports 1 through 1023.
                 self.client_port = (attempt % 1023) + 1
                 self.client.bind(("", self.client_port))
-                logger.debug("RPC client bound to port %d", self.client_port)
+                logger.debug(f"RPC client bound to port {self.client_port}")
                 return
             except PermissionError as e:
                 if e.errno != errno.EACCES:
@@ -153,7 +213,7 @@ class RPC(object):
                 logger.error("Permission denied! Could not bind to low port, NFS functionality unavailable!")
                 raise RPCProtocolError("RPC client requires permission to bind a privileged source port") from e
             except OSError as e:
-                logger.warning("Socket port binding with %s failed in loop %d, try again.", self.client_port, attempt)
+                logger.warning(f"Socket port binding with {self.client_port} failed in loop {attempt}, try again.")
         logger.error("Could not bind client port. No ports left on the client.")
         raise RPCProtocolError("RPC client could not bind a privileged source port after 120000 attempts")
 
@@ -164,7 +224,7 @@ class RPC(object):
         self.client = None
         if self in self.connections:
             self.connections.remove(self)
-        logger.debug("RPC connection closed; source port was %s", self.client_port)
+        logger.debug(f"RPC connection closed; source port was {self.client_port}")
 
     @classmethod
     def disconnect_all(cls):

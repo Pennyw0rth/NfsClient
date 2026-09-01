@@ -3,7 +3,7 @@ import struct
 import pytest
 
 from pyNfsClient.rpc import RPC
-from pyNfsClient.rpc_const import RPCSEC_GSS
+from pyNfsClient.rpc_const import MSG_ACCEPTED, REPLY, RPCSEC_GSS, SUCCESS
 from pyNfsClient.rpcsec_gss import GSS_S_COMPLETE, RPC_GSS_SVC_INTEGRITY, RPC_GSS_SVC_PRIVACY, RPCSECGSSAuth, RPCSECGSSError, pack_opaque, unpack_opaque
 
 
@@ -55,6 +55,31 @@ class FakeRPC:
         return RPCSEC_GSS, b"M" + struct.pack("!L", 32), self.response
 
 
+class RetryingSocket:
+    def __init__(self, reply):
+        self.reply = bytearray(reply)
+        self.sent = []
+        self.timed_out = False
+
+    def recv(self, size):
+        if not self.timed_out:
+            self.timed_out = True
+            raise TimeoutError
+        data = bytes(self.reply[:size])
+        del self.reply[:size]
+        return data
+
+    def sendall(self, data):
+        self.sent.append(data)
+
+
+def accepted_gss_reply(xid, verifier, payload):
+    body = struct.pack("!3L", xid, REPLY, MSG_ACCEPTED)
+    body += RPC.pack_opaque_auth(RPCSEC_GSS, verifier)
+    body += struct.pack("!L", SUCCESS) + payload
+    return struct.pack("!L", 0x80000000 | len(body)) + body
+
+
 def test_establishes_context_and_checks_window_verifier():
     response = pack_opaque(b"server-handle")
     response += struct.pack("!3L", GSS_S_COMPLETE, 0, 32) + pack_opaque(b"ap-rep")
@@ -100,6 +125,29 @@ def test_privacy_service_wraps_and_unwraps_body():
     reply = pack_opaque(context.wrap(struct.pack("!L", 9) + b"result"))
 
     assert auth.process_reply(RPCSEC_GSS, context.getMIC(struct.pack("!L", 9)), reply) == b"result"
+
+
+@pytest.mark.parametrize("reply_sequence", [7, 8])
+def test_prepared_gss_retry_keeps_xid_and_uses_fresh_sequence(monkeypatch, reply_sequence):
+    monkeypatch.setattr("pyNfsClient.rpc.secrets.randbits", lambda bits: 0x12345678)
+    context = FakeContext()
+    auth = RPCSECGSSAuth(context, b"handle", "krb5i", sequence=7)
+    cleartext = struct.pack("!L", reply_sequence) + b"result"
+    rpc = RPC("server", 2049, 1)
+    rpc.client = RetryingSocket(accepted_gss_reply(0x12345678, context.getMIC(struct.pack("!L", reply_sequence)), pack_opaque(cleartext) + pack_opaque(context.getMIC(cleartext))))
+    arguments = bytearray(b"arguments")
+    prepared = rpc.prepare_request(100003, 4, 1, arguments, auth=auth)
+    arguments[:] = b"different"
+
+    with pytest.raises(TimeoutError):
+        rpc.send_prepared(prepared)
+
+    assert rpc.retransmit(prepared) == b"result"
+    assert [struct.unpack("!L", call[44:48])[0] for call in rpc.client.sent] == [7, 8]
+    assert [struct.unpack("!L", call[4:8])[0] for call in rpc.client.sent] == [0x12345678, 0x12345678]
+    assert all(b"arguments" in call and b"different" not in call for call in rpc.client.sent)
+    assert prepared.body == b"arguments"
+    assert auth.pending_sequence is None
 
 
 def test_body_sequence_must_match_credential():

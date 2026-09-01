@@ -21,7 +21,7 @@ class KerberosGSSContext:
     SEALED = 0x02
     ACCEPTOR_SUBKEY = 0x04
 
-    def __init__(self, cipher, sessionKey, sequenceNumber=0, isAcceptor=False, sendSequenceNumber=None, receiveSequenceNumber=None):
+    def __init__(self, cipher, sessionKey, sequenceNumber=0, isAcceptor=False, sendSequenceNumber=None, receiveSequenceNumber=None, sequenceEnforced=True):
         self.validateCipher(cipher, sessionKey)
         if sendSequenceNumber is None:
             sendSequenceNumber = sequenceNumber
@@ -32,6 +32,7 @@ class KerberosGSSContext:
         self.sendSequenceNumber = sendSequenceNumber
         self.receiveSequenceNumber = receiveSequenceNumber
         self.isAcceptor = isAcceptor
+        self.sequenceEnforced = sequenceEnforced
         self.usingAcceptorSubkey = False
         self.validateSequenceNumber(sendSequenceNumber)
         self.validateSequenceNumber(receiveSequenceNumber)
@@ -59,13 +60,14 @@ class KerberosGSSContext:
         return token
 
     def verifyMIC(self, data, token):
-        """Verify a peer MIC token and advance the receiving sequence."""
+        """Verify a peer MIC token and advance enforced receiving sequence."""
         self.validateSequenceNumber(self.receiveSequenceNumber)
         if self.cipher.enctype == constants.EncryptionTypes.rc4_hmac.value:
             self.verifyRC4MIC(bytes(data), bytes(token))
         else:
             self.verifyAESMIC(bytes(data), bytes(token))
-        self.receiveSequenceNumber = (self.receiveSequenceNumber + 1) & self.sequenceMask()
+        if self.sequenceEnforced:
+            self.receiveSequenceNumber = (self.receiveSequenceNumber + 1) & self.sequenceMask()
         return True
 
     def wrap(self, data, encrypt=True):
@@ -85,7 +87,8 @@ class KerberosGSSContext:
             data = self.unwrapRC4(bytes(token))
         else:
             data = self.unwrapAES(bytes(token))
-        self.receiveSequenceNumber = (self.receiveSequenceNumber + 1) & self.sequenceMask()
+        if self.sequenceEnforced:
+            self.receiveSequenceNumber = (self.receiveSequenceNumber + 1) & self.sequenceMask()
         return data
 
     def validateCipher(self, cipher, sessionKey):
@@ -132,7 +135,7 @@ class KerberosGSSContext:
         return KG_USAGE_INITIATOR_SEAL
 
     def validateReceivedSequence(self, sequenceNumber):
-        if sequenceNumber != self.receiveSequenceNumber:
+        if self.sequenceEnforced and sequenceNumber != self.receiveSequenceNumber:
             raise ValueError(f"Unexpected Kerberos GSS sequence number {sequenceNumber:d}, expected {self.receiveSequenceNumber:d}")
 
     def getAESMIC(self, data):

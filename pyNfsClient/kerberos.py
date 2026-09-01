@@ -66,7 +66,7 @@ class KerberosInitiator:
             raise KerberosCredentialError("Kerberos AP-REP does not match the AP-REQ authenticator")
 
         receive_sequence = int(reply["seq-number"]) if reply["seq-number"].hasValue() else 0
-        self.context = KerberosGSSContext(self.cipher, self.session_key, sendSequenceNumber=self.send_sequence, receiveSequenceNumber=receive_sequence)
+        self.context = KerberosGSSContext(self.cipher, self.session_key, sendSequenceNumber=self.send_sequence, receiveSequenceNumber=receive_sequence, sequenceEnforced=False)
         if reply["subkey"].hasValue():
             keytype = int(reply["subkey"]["keytype"])
             self.context.setAcceptorSubkey(_enctype_table[keytype](), Key(keytype, reply["subkey"]["keyvalue"].asOctets()))

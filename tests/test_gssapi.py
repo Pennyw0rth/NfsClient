@@ -45,6 +45,17 @@ class KerberosGSSContextTests(unittest.TestCase):
         self.assertTrue(acceptor.verifyMIC(b"request", initiator.getMIC(b"request")))
         self.assertTrue(initiator.verifyMIC(b"reply", acceptor.getMIC(b"reply")))
 
+    def test_disabled_sequence_check_accepts_out_of_order_tokens(self):
+        key = crypto.Key(constants.EncryptionTypes.aes128_cts_hmac_sha1_96.value, b"Q" * 16)
+        sender = KerberosGSSContext(crypto._AES128CTS, key, sequenceNumber=7)
+        receiver = KerberosGSSContext(crypto._AES128CTS, key, sequenceNumber=7, isAcceptor=True, sequenceEnforced=False)
+        mic = sender.getMIC(b"first")
+        wrapped = sender.wrap(b"second")
+
+        self.assertEqual(receiver.unwrap(wrapped), b"second")
+        self.assertTrue(receiver.verifyMIC(b"first", mic))
+        self.assertEqual(receiver.receiveSequenceNumber, 7)
+
     def test_aes_wrap_both_directions_and_services(self):
         for senderIsAcceptor in (False, True):
             for encrypt in (False, True):

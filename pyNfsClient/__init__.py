@@ -5,11 +5,12 @@ from .rpc import RPC
 from .portmap import Portmap
 from .mount import Mount
 from .nfs3 import NFSv3
+from .client import NFSClient
 from .nfs4_base import ClientIdentity, NFS4Error, NFS4UncertainError, NFSv4Protocol
 from .nfs40 import NFSv40
 from .nfs41 import NFSv41
 from .nfs42 import NFSv42
-from .nfs4_probe import discover_minor_versions, probe_minor_version
+from .nfs4_probe import NFSVersionDiscovery, discover_minor_versions, discover_nfs_versions, probe_minor_version, probe_nfs3
 from .const import *
 
 logging.getLogger(__package__).addHandler(NullHandler())
@@ -22,7 +23,7 @@ def release_all_rpc():
     RPC.disconnect_all()
 
 
-__all__ = ("Portmap", "Mount", "NFSv3", "NFSv40", "NFSv41", "NFSv42", "NFSv4Protocol", "ClientIdentity", "NFS4Error", "NFS4UncertainError", "probe_minor_version", "discover_minor_versions", "MOUNT_PROGRAM", "MNT3_OK", "MNT3ERR_ACCES", "MNT3ERR_INVAL", "MNT3ERR_IO",
+__all__ = ("Portmap", "Mount", "NFSClient", "NFSv3", "NFSv40", "NFSv41", "NFSv42", "NFSv4Protocol", "ClientIdentity", "NFS4Error", "NFS4UncertainError", "NFSVersionDiscovery", "probe_nfs3", "probe_minor_version", "discover_minor_versions", "discover_nfs_versions", "MOUNT_PROGRAM", "MNT3_OK", "MNT3ERR_ACCES", "MNT3ERR_INVAL", "MNT3ERR_IO",
            "MNT3ERR_NAMETOOLONG", "MNT3ERR_NOENT", "MNT3ERR_NOTDIR", "MNT3ERR_NOTSUPP", "MNT3ERR_PERM",
            "MNT3ERR_SERVERFAULT", "MOUNTSTAT3", "NFSSTAT3", "NFS3_OK", "NFS3ERR_ACCES", "NFS3ERR_BAD_COOKIE",
            "NFS3ERR_BADHANDLE", "NFS3ERR_BADTYPE", "NFS3ERR_DQUOT", "NFS3ERR_EXIST", "NFS3ERR_FBIG",

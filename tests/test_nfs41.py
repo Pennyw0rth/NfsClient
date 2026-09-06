@@ -490,7 +490,7 @@ class NFSv41SessionTests(unittest.TestCase):
             client.compound(())
         self.assertTrue(client.session_broken)
 
-        invalid_slot = types.Sequence4Res(SESSION, 1, 0, 1, 1, 0)
+        invalid_slot = types.Sequence4Res(SESSION, 1, 1, 1, 1, 0)
         client = MockNFSv41(response(types.ResOp4(const.OP_SEQUENCE, const.NFS4_OK, invalid_slot)))
         client.sessionid = SESSION
         client.fore_chan_attrs = CHANNEL
@@ -513,10 +513,27 @@ class NFSv41SessionTests(unittest.TestCase):
         client = MockNFSv41(response(types.ResOp4(const.OP_SEQUENCE, const.NFS4_OK, sequence)))
         client.sessionid = SESSION
         client.fore_chan_attrs = channels
+        self.assertEqual((client.highest_slotid, client.target_highest_slotid), (0, 0))
         client.compound(())
         sent = decode(client.calls[0][0]).argarray[0].arg
         self.assertEqual((sent.slotid, sent.highest_slotid), (0, 0))
         self.assertEqual(client.slot_sequenceid, 2)
+        self.assertEqual((client.highest_slotid, client.target_highest_slotid), (3, 2))
+        self.assertFalse(client.session_broken)
+        client.clear_session()
+        self.assertEqual((client.highest_slotid, client.target_highest_slotid), (0, 0))
+
+    def test_sequence_accepts_linux_dynamic_slot_expansion_while_using_slot_zero(self):
+        channels = types.ChannelAttrs4(0, 1024, 1024, 1024, 4, 1)
+        sequence = types.Sequence4Res(SESSION, 1, 0, 1, 1, 0)
+        client = MockNFSv41(response(types.ResOp4(const.OP_SEQUENCE, const.NFS4_OK, sequence)))
+        client.sessionid = SESSION
+        client.fore_chan_attrs = channels
+        client.compound(())
+        sent = decode(client.calls[0][0]).argarray[0].arg
+        self.assertEqual((sent.slotid, sent.highest_slotid), (0, 0))
+        self.assertEqual(client.slot_sequenceid, 2)
+        self.assertEqual((client.highest_slotid, client.target_highest_slotid), (1, 1))
         self.assertFalse(client.session_broken)
 
     def test_negotiation_accepts_server_role_but_rejects_invalid_role_and_backchannel(self):

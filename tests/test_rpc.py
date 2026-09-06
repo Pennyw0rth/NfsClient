@@ -3,8 +3,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from pyNfsClient.rpc import RPC, RPCAuthenticationError, RPCProtocolError
-from pyNfsClient.rpc_const import AUTH_NONE, MSG_ACCEPTED, REPLY, SUCCESS
+from pyNfsClient.rpc import RPC, RPCAcceptError, RPCAuthenticationError, RPCProtocolError
+from pyNfsClient.rpc_const import AUTH_NONE, MSG_ACCEPTED, PROG_MISMATCH, PROG_UNAVAIL, REPLY, SUCCESS
 
 
 class FragmentedSocket:
@@ -170,3 +170,15 @@ def test_recv_exact_reports_early_close():
 
 def test_authentication_error_preserves_legacy_message():
     assert str(RPCAuthenticationError(2)) == "RPC_AUTH_ERROR: AUTH_REJECTEDCRED"
+
+
+def test_accepted_program_errors_preserve_status_and_version_range():
+    with pytest.raises(RPCAcceptError) as unavailable:
+        RPC.raise_accept_error(PROG_UNAVAIL, b"")
+    assert unavailable.value.status == PROG_UNAVAIL
+    assert str(unavailable.value) == "RPC program is unavailable"
+
+    with pytest.raises(RPCAcceptError) as mismatch:
+        RPC.raise_accept_error(PROG_MISMATCH, struct.pack("!2L", 3, 4))
+    assert (mismatch.value.status, mismatch.value.low, mismatch.value.high) == (PROG_MISMATCH, 3, 4)
+    assert str(mismatch.value) == "RPC program version mismatch; server supports 3 through 4"

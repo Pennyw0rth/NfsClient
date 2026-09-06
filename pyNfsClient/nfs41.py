@@ -53,6 +53,8 @@ class NFSv41(NFSv4Protocol):
         self.fore_chan_attrs = None
         self.back_chan_attrs = None
         self.slot_sequenceid = 1
+        self.highest_slotid = 0
+        self.target_highest_slotid = 0
         self.session_status_flags = 0
         self.session_broken = False
         self.session_lock = threading.RLock()
@@ -116,7 +118,7 @@ class NFSv41(NFSv4Protocol):
             try:
                 try:
                     response = self.send_prepared(prepared)
-                except Exception:
+                except Exception as e:
                     if prepared.finished:
                         raise
                     self.reconnect_transport(prepared)
@@ -135,7 +137,7 @@ class NFSv41(NFSv4Protocol):
                     auth.refresh(self, const.NFS_PROGRAM, const.NFS_V4)
                     continue
                 raise
-            except Exception:
+            except Exception as e:
                 self.abort_prepared(prepared)
                 raise
 
@@ -158,10 +160,12 @@ class NFSv41(NFSv4Protocol):
         if result.status != const.NFS4_OK:
             self.session_broken = True
             return
-        if not isinstance(result.result, types.Sequence4Res) or result.result.sessionid != request.arg.sessionid or result.result.sequenceid != request.arg.sequenceid or result.result.slotid != 0 or result.result.highest_slotid >= self.fore_chan_attrs.maxrequests or result.result.target_highest_slotid >= self.fore_chan_attrs.maxrequests:
+        if not isinstance(result.result, types.Sequence4Res) or result.result.sessionid != request.arg.sessionid or result.result.sequenceid != request.arg.sequenceid or result.result.slotid != request.arg.slotid:
             self.session_broken = True
             raise NFS4Error(const.NFS4ERR_BADXDR, const.OP_SEQUENCE, 0, response)
         self.slot_sequenceid = (self.slot_sequenceid + 1) & 0xFFFFFFFF
+        self.highest_slotid = result.result.highest_slotid
+        self.target_highest_slotid = result.result.target_highest_slotid
         self.session_status_flags = result.result.status_flags
 
     def compound(self, operations, tag=b"", auth=None, check=True):
@@ -193,7 +197,7 @@ class NFSv41(NFSv4Protocol):
                     raise NFS4Error(const.NFS4ERR_BADXDR, response=response)
                 self.check_response(wire_operations, response, False)
                 self.check_sequence(sequence, response)
-            except Exception:
+            except Exception as e:
                 self.session_broken = True
                 raise
             self.check_response(wire_operations, response, check)
@@ -216,7 +220,7 @@ class NFSv41(NFSv4Protocol):
                     return self.sessionid
                 try:
                     self.destroy_session()
-                except Exception:
+                except Exception as e:
                     self.clear_session()
             if client_name is None:
                 client_name = self.client_name or f"{socket.gethostname()}:{os.getpid()}:{self.client_nonce}".encode()
@@ -243,6 +247,8 @@ class NFSv41(NFSv4Protocol):
             self.fore_chan_attrs = created.fore_chan_attrs
             self.back_chan_attrs = created.back_chan_attrs
             self.slot_sequenceid = 1
+            self.highest_slotid = 0
+            self.target_highest_slotid = 0
             self.session_status_flags = 0
             self.session_broken = False
             response = self.compound((self.reclaim_complete_op(),), tag=b"reclaim-complete", auth=request_auth, check=False)
@@ -280,6 +286,8 @@ class NFSv41(NFSv4Protocol):
         self.fore_chan_attrs = None
         self.back_chan_attrs = None
         self.slot_sequenceid = 1
+        self.highest_slotid = 0
+        self.target_highest_slotid = 0
         self.session_status_flags = 0
         self.session_broken = False
 
@@ -310,11 +318,11 @@ class NFSv41(NFSv4Protocol):
         if self.client is not None:
             try:
                 self.destroy_session()
-            except Exception:
+            except Exception as e:
                 pass
             try:
                 self.destroy_client()
-            except Exception:
+            except Exception as e:
                 pass
         self.clear_session()
         self.clientid = None

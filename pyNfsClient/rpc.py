@@ -25,6 +25,17 @@ class RPCAuthenticationError(RPCProtocolError):
         super().__init__(f"RPC_AUTH_ERROR: {AUTH_REASON.get(status, status)}")
 
 
+class RPCAcceptError(RPCProtocolError):
+    def __init__(self, status, low=None, high=None):
+        self.status = status
+        self.low = low
+        self.high = high
+        if status == PROG_MISMATCH:
+            super().__init__(f"RPC program version mismatch; server supports {low} through {high}")
+        else:
+            super().__init__(ACCEPT_STATUS.get(status, f"unknown RPC acceptance status {status}"))
+
+
 class RPCPreparedRequest:
     def __init__(self, xid, call_header, body, auth, call):
         self.xid = xid
@@ -99,7 +110,7 @@ class RPC(object):
                     auth.refresh(self, program, program_version)
                     continue
                 raise
-            except Exception:
+            except Exception as e:
                 if auth is not None and hasattr(auth, "abort_request"):
                     auth.abort_request()
                 raise
@@ -358,5 +369,5 @@ class RPC(object):
             if len(body) < 8:
                 raise RPCProtocolError("truncated RPC program version mismatch reply")
             low, high = struct.unpack("!2L", body[:8])
-            raise RPCProtocolError(f"RPC program version mismatch; server supports {low} through {high}")
-        raise RPCProtocolError(ACCEPT_STATUS.get(accept_status, f"unknown RPC acceptance status {accept_status}"))
+            raise RPCAcceptError(accept_status, low, high)
+        raise RPCAcceptError(accept_status)
